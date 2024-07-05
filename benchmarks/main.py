@@ -49,11 +49,20 @@ parser.add_argument("--iterative-steps", default=400, type=int)
 
 args = parser.parse_args()
 
-def progressive_pruning(pruner, model, speed_up, example_inputs, train_loader=None):
+def progressive_pruning(pruner, model, speed_up, example_inputs, device=None, train_loader=None, test_loader=None):
     model.eval()
     base_ops, _ = tp.utils.count_ops_and_params(model, example_inputs=example_inputs)
     current_speed_up = 1
     while current_speed_up < speed_up:
+        if test_loader:
+            pass
+            # eval(model=model, test_loader=test_loader)
+            # acc, val_loss = eval(model, test_loader, device=device)
+            # args.logger.info(
+            #     "Speedup {:.2f}/{:.2f}, Acc={:.4f}, Val Loss={:.4f}".format(
+            #         current_speed_up, speed_up, acc, val_loss
+            #     )
+            # )
         if args.method == "obdc":
             model.zero_grad()
             imp=pruner.importance
@@ -127,6 +136,16 @@ def train_model(
     )
     model.to(device)
     best_acc = -1
+
+    # Starting point
+    model.eval()
+    acc, val_loss = eval(model, test_loader, device=device)
+    args.logger.info(
+        "Starting point: Acc={:.4f}, Val Loss={:.4f}".format(
+            acc, val_loss
+        )
+    )
+    
     for epoch in range(epochs):
         model.train()
     
@@ -266,6 +285,7 @@ def main():
         log_file = "{}/{}.txt".format(args.output_dir, logger_name)
     elif args.mode == "test":
         log_file = None
+        logger_name = "{}-{}".format(args.dataset, args.model)
     args.logger = utils.get_logger(logger_name, output=log_file)
 
     # Model & Dataset
@@ -344,7 +364,7 @@ def main():
         ori_ops, ori_size = tp.utils.count_ops_and_params(model, example_inputs=example_inputs)
         ori_acc, ori_val_loss = eval(model, test_loader, device=args.device)
         args.logger.info("Pruning...")
-        progressive_pruning(pruner, model, speed_up=args.speed_up, example_inputs=example_inputs, train_loader=train_loader)
+        progressive_pruning(pruner, model, speed_up=args.speed_up, example_inputs=example_inputs, device=args.device, train_loader=train_loader, test_loader=test_loader)
         del pruner # remove reference
         args.logger.info(model)
         pruned_ops, pruned_size = tp.utils.count_ops_and_params(model, example_inputs=example_inputs)

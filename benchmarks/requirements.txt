@@ -5,6 +5,9 @@ tqdm
 torchvision>=0.9.1
 tensorboard
 
+torch_pruning
+timm
+
 # for main_gat.py
 h5py
 networkx 
