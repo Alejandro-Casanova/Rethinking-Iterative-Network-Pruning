@@ -1,4 +1,4 @@
-<br>
+
 <div align="center">
 <img src="https://user-images.githubusercontent.com/18592211/232830417-0b21a874-516e-4420-8984-4de414a35085.png" width="400px"></img>
 <h2></h2>
@@ -8,10 +8,10 @@
 
 <p align="center">
   <a href="https://github.com/VainF/Torch-Pruning/actions"><img src="https://img.shields.io/badge/tests-passing-9c27b0.svg" alt="Test Status"></a>
-  <a href="https://pytorch.org/"><img src="https://img.shields.io/badge/PyTorch-1.12 %20%7C%202.0-673ab7.svg" alt="Tested PyTorch Versions"></a>
+  <a href="https://pytorch.org/"><img src="https://img.shields.io/badge/PyTorch-1.x %20%7C%202.x-673ab7.svg" alt="Tested PyTorch Versions"></a>
   <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-4caf50.svg" alt="License"></a>
   <a href="https://pepy.tech/project/Torch-Pruning"><img src="https://static.pepy.tech/badge/Torch-Pruning?color=2196f3" alt="Downloads"></a>
-  <a href="https://github.com/VainF/Torch-Pruning/releases/latest"><img src="https://img.shields.io/badge/Latest%20Version-1.4.1-3f51b5.svg" alt="Latest Version"></a>
+  <a href="https://github.com/VainF/Torch-Pruning/releases/latest"><img src="https://img.shields.io/badge/Latest%20Version-1.4.2-3f51b5.svg" alt="Latest Version"></a>
   <a href="https://colab.research.google.com/drive/1TRvELQDNj9PwM-EERWbF3IQOyxZeDepp?usp=sharing">
   <img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/>
 </a>
@@ -31,9 +31,9 @@ For more technical details, please refer to our CVPR'23 paper:
 > [**DepGraph: Towards Any Structural Pruning**](https://openaccess.thecvf.com/content/CVPR2023/html/Fang_DepGraph_Towards_Any_Structural_Pruning_CVPR_2023_paper.html)   
 > *[Gongfan Fang](https://fangggf.github.io/), [Xinyin Ma](https://horseee.github.io/), [Mingli Song](https://person.zju.edu.cn/en/msong), [Michael Bi Mi](https://dblp.org/pid/317/0937.html), [Xinchao Wang](https://sites.google.com/site/sitexinchaowang/)*    
 > *[Learning and Vision Lab](http://lv-nus.org/), National University of Singapore*
-  
+
 ### Update:
-- :rocket: 2024.07.20  Add [**Isomorphic Pruning**](https://arxiv.org/abs/2407.04616). A SOTA method for Vision Transformers and Modern CNNs.
+- :rocket: 2024.07.20  Add [**Isomorphic Pruning (ECCV'24)**](https://arxiv.org/abs/2407.04616). A SOTA method for Vision Transformers and Modern CNNs.
 
 ### **Features:**
 - :zap: High-level Pruners: [MetaPruner](torch_pruning/pruner/algorithms/metapruner.py), [MagnitudePruner](https://arxiv.org/abs/1608.08710), [BNScalePruner](https://arxiv.org/abs/1708.06519), [GroupNormPruner](https://arxiv.org/abs/2301.12900), [GrowingRegPruner](https://arxiv.org/abs/2012.09243), RandomPruner, etc. A paper list is available [here](https://github.com/VainF/Torch-Pruning/wiki/0.-Paper-List).
@@ -48,7 +48,7 @@ For more technical details, please refer to our CVPR'23 paper:
 Please do not hesitate to open an [issue](https://github.com/VainF/Torch-Pruning/issues) if you encounter any problems with the library or the paper.   
 Or Join our Discord or WeChat group for a chat:
   * Discord: [link](https://discord.gg/Pvd6hbYXRs)
-  * WeChat Group [Group-2](https://github.com/user-attachments/assets/be847b8b-9688-4787-9e89-3aa8b423071f), [Group-1 (500/500, FULL)](https://github.com/VainF/Torch-Pruning/assets/18592211/35d66130-eb03-4dcb-ad75-8df784460ad3).
+  * WeChat Group [Group-2](https://github.com/user-attachments/assets/4072cc1e-63d7-4f33-b003-1e8da516f421), [Group-1 (500/500, FULL)](https://github.com/VainF/Torch-Pruning/assets/18592211/35d66130-eb03-4dcb-ad75-8df784460ad3).
 
 ## Table of Contents
 - [Installation](#installation)
@@ -204,6 +204,10 @@ print(f"MACs: {base_macs/1e9} G -> {macs/1e9} G, #Params: {base_nparams/1e6} M -
 # ...
 ```
 ```
+# Note: In TP, pruning ratio means channel pruning ratio.
+#       Since both in & out channels will be removed by p%,
+#       the corresponding parameter pruning ratio will be roughly 1-(1-p%)^2.
+#       In this example, 3.06 ~= 11.69 * (1-0.5)^2 = 2.92
 MACs: 1.822177768 G -> 0.487202536 G, #Params: 11.689512 M -> 3.05588 M
 ```
 #### Global Pruning and Isomorphic Pruning
