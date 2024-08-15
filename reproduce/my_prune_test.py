@@ -1,8 +1,15 @@
 import argparse
+from datetime import timedelta
+from importlib import reload
+import json
 from logging import Logger
+import logging
 import math
 import os
+import pickle
+import pprint
 import random
+import time
 from scipy.optimize import fsolve
 
 import torch
@@ -13,6 +20,8 @@ import torch_pruning as tp
 
 import engine.utils as utils
 import registry
+
+import optuna
 
 parser = argparse.ArgumentParser()
 
@@ -162,7 +171,7 @@ def setup_logger(dataset: str = "cifar10",
                  ) -> Logger:
     prefix = 'global' if global_pruning else 'local'
     logger_name = "{}-{}-{}-{}".format(dataset, prefix, method, model)
-    output_dir = os.path.join(output_dir, dataset, mode, logger_name)
+    output_dir = os.path.join(output_dir, logger_name)
     log_file = "{}/{}.txt".format(output_dir, logger_name)
     
     logger = utils.get_logger(logger_name, output=log_file)
@@ -214,7 +223,7 @@ def prune(model,
           test_loader,
           logger: Logger,
           prune_rate: float = 0.5,
-          device: str = "cuda"):
+          device: str = "cuda")-> tuple:
     model.eval()
     ori_ops, ori_size = tp.utils.count_ops_and_params(model, example_inputs=example_inputs)
     ori_acc, ori_val_loss = eval(model, test_loader, device=device)
@@ -227,7 +236,7 @@ def prune(model,
                         logger=logger)
     
     del pruner # remove reference
-    logger.info(model)
+    # logger.info(model) # Print whole model architecture
     pruned_ops, pruned_size = tp.utils.count_ops_and_params(model, example_inputs=example_inputs)
     pruned_acc, pruned_val_loss = eval(model, test_loader, device=device)
     
@@ -251,6 +260,7 @@ def prune(model,
     logger.info(
         "Val Loss: {:.4f} => {:.4f}".format(ori_val_loss, pruned_val_loss)
     )
+    return pruned_size, pruned_ops
     
 def train_model(
     model,
@@ -273,7 +283,7 @@ def train_model(
     save_state_dict_only = True,
     #pruner = None,
     device = None,
-):
+) -> tuple:
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     optimizer = torch.optim.SGD(
@@ -282,7 +292,7 @@ def train_model(
         momentum=0.9,
         weight_decay=weight_decay, #if pruner is None else 0,
     )
-    milestones = [int(ms) for ms in lr_decay_milestones.split(",")]
+    milestones = None if lr_decay_milestones is None else [int(ms) for ms in lr_decay_milestones.split(",")]
     scheduler = torch.optim.lr_scheduler.MultiStepLR(
         optimizer, milestones=milestones, gamma=lr_decay_gamma
     )
@@ -350,6 +360,8 @@ def train_model(
             best_acc = acc
         scheduler.step()
     logger.info("Best Acc=%.4f" % (best_acc))
+    logger.info("Last Acc=%.4f" % (acc))
+    return best_acc, acc
 
 def retrain(model,
             train_loader,
@@ -360,10 +372,10 @@ def retrain(model,
             total_epochs: int = 100,
             lr: float = 0.01,
             lr_decay_milestones: str = "60,80"
-            ):
+            ) -> tuple:
     
     logger.info("Re-training...")
-    train_model(
+    best_acc, last_acc = train_model(
         model,
         train_loader=train_loader,
         test_loader=test_loader,
@@ -375,6 +387,20 @@ def retrain(model,
         save_state_dict_only=False,
         device=device,
     )
+    return best_acc, last_acc
+
+def save_results(output_dir: str,
+                 results: dict,
+                 file_name: str = "results"):
+    save_as = os.path.join(output_dir, file_name)
+
+    # Save results in pretty text format
+    with open('{}.txt'.format(save_as), 'w') as fp:
+        pprint.pprint(results, fp)
+
+    # Save results in json format
+    with open('{}.json'.format(save_as), "w") as fp:
+        json.dump(results, fp)
 
 # Define the function to solve
 def static_equations(vars):
@@ -392,34 +418,80 @@ def static_allocation():
 
     print(f"Epochs for each iteration: E1={E1}, E2={E2}, E3={E3}, E4={E4}, E5={E5}")
 
-def dynamic_allocation(
-    initial_epochs = 100,
-    initial_flops = 1e9,  # example initial FLOPs of unpruned model
-    target_pruning_ratio = 0.5,
-    one_shot_final_flops = 1e9 * 0.6, # Placeholder, must be replaced with real value after trying one-shot pruning!
-    num_iterations = 5,
+def dynamic_epoch_allocation_pruning(
+    seed: int = None,
+    retraining_epochs = 60,
+    finetuning_epochs = 40,
+    finetuning_lr: float = 0.001,
+    finetuning_lr_decay_milestones: str = "20",
+    #initial_flops = 1e9,  # example initial FLOPs of unpruned model
+    target_prune_ratio = 0.5,
+    one_shot_final_flops = 1e9 * 0.6, # FLOPs of the final model obtained through one-shot pruning
+    num_iterations = 5, # Pruning iterations
 ):
     
+    # Set torch random seed
+    if seed is not None:
+        torch.manual_seed(seed)
+
+    # Setup logger
+    logger, output_dir = setup_logger(
+        output_dir="my_runs/" + time.strftime("%Y-%m-%d-%H:%M") + "/dynamic-iterative/" + str(target_prune_ratio) 
+    )
+
+    # Load model and dataset
+    model, train_loader, test_loader, example_inputs, dataset_num_classes = setup_model_and_dataset(logger=logger)
+    
+    # Measure original model flops and parameter counts (before pruning)
+    model.eval()
+    initial_flops, initial_params = tp.utils.count_ops_and_params(model, example_inputs=example_inputs)
+    initial_acc, initial_val_loss = eval(model, test_loader)
+
     # Total computational budget
-    total_budget = initial_epochs * one_shot_final_flops # This is the cost of one-shot pruning
+    total_budget = retraining_epochs * one_shot_final_flops # This is the cost of one-shot pruning
 
     # Initialize variables
     remaining_budget = total_budget
     current_flops = initial_flops
 
     # Store epochs for each iteration
-    epochs_list = []
+    epochs_list = [0]
     flops_list = [current_flops]
+    params_list = [initial_params]
+    raw_accuracy_list = [initial_acc] # Model accuracy just after pruning
+    regained_accuracy_list = [initial_acc] # Model accuracy after pruning and retraining
+    # TODO also save loss...?
 
-    pruning_ratio = 1 - math.pow((1 - target_pruning_ratio), 1 / num_iterations)
+    # Calculate constant pruning ratio required to achieve target compression in the desired number of iterations
+    pruning_ratio = 1 - math.pow((1 - target_prune_ratio), 1 / num_iterations)
+
+    # Save start time (for runtime calculation)
+    start_time = time.time()
 
     for i in range(num_iterations):
-        # Simulate pruning to get new FLOPs (this is a placeholder, replace with actual pruning function)
-        aux = random.uniform(pruning_ratio * 0.6, pruning_ratio)
+        # Set up pruner for each iteration (it is deleted at the end of each iteration too)
+        pruner = get_pruner(model=model,
+                            example_inputs=example_inputs,
+                            dataset_num_classes=dataset_num_classes)
+        
+        # Prune the model and get new FLOPs value 
+        pruned_params, new_flops = prune(model=model,
+                                            example_inputs=example_inputs,
+                                            pruner=pruner,
+                                            test_loader=test_loader,
+                                            logger=logger,
+                                            prune_rate=pruning_ratio)
+        
+        # Evaluate pruned model performance
+        pruned_acc, pruned_val_loss = eval(model, test_loader)
+        #aux = random.uniform(pruning_ratio * 0.6, pruning_ratio)
         #print(f"{pruning_ratio} - {aux}")
-        new_flops = current_flops - current_flops * aux
+        #new_flops = current_flops - current_flops * aux
 
+        # Append results to list
         flops_list.append(new_flops)
+        params_list.append(pruned_params)
+        raw_accuracy_list.append(pruned_acc)
         
         # Calculate remaining budget after current iteration
         if i > 0:
@@ -439,57 +511,179 @@ def dynamic_allocation(
             # Round epochs variable on the last iteration
             epochs = round(epochs)
 
-        # Append to list
+        # Retrain Pruned Model for the dynamically calculated number of epochs
+        best_acc, last_acc = retrain(model=model,
+                                     train_loader=train_loader,
+                                     test_loader=test_loader,
+                                     logger=logger,
+                                     output_dir=output_dir,
+                                     total_epochs=epochs,
+                                     lr_decay_milestones=None)
+        
+        # Append results to list
         epochs_list.append(epochs)
+        regained_accuracy_list.append(last_acc)
         
         # Update current FLOPs
         current_flops = new_flops
 
+    # Finally, fine-tune the model, with lower lr
+    best_acc, last_acc = retrain(model=model,
+                                 train_loader=train_loader,
+                                 test_loader=test_loader,
+                                 logger=logger,
+                                 output_dir=output_dir,
+                                 total_epochs=finetuning_epochs,
+                                 lr=finetuning_lr,
+                                 lr_decay_milestones=finetuning_lr_decay_milestones)
+
+    # Calculate Runtime
+    runtime = str(timedelta( seconds=(time.time() - start_time) ))
+
+    # Append results to list
+    epochs_list.append(finetuning_epochs)
+    flops_list.append(flops_list[-1])
+    params_list.append(params_list[-1])
+    raw_accuracy_list.append(best_acc)
+    regained_accuracy_list.append(best_acc)
+
+    # Aux variable
     budget_accumulator = 0
 
     # Print results
-    for idx, epochs in enumerate(epochs_list):
-        print(f"Iteration {idx + 1}: {epochs:.2f} epochs with {flops_list[idx + 1]:.3e} FLOPs - Speedup: x{flops_list[idx] / flops_list[idx + 1]:.3f}")
+    for idx, epochs in enumerate(epochs_list[1:-1]): # Note, last element corresponds to finetuning iteration, and must not be considered in budget calculation
+        logger.info(f"Iteration {idx + 1}: {epochs:.2f} epochs with {flops_list[idx + 1]:.3e} FLOPs - Speedup: x{flops_list[idx] / flops_list[idx + 1]:.3f}")
         budget_accumulator += epochs * flops_list[idx + 1]
 
-    print(f"Remaining budget after last iteration: {remaining_budget - epochs_list[-1] * current_flops:.3e}")
-    print(f"Budget for one-shot pruning: {total_budget:.3e}")
-    print(f"Budget for iterative pruning: {budget_accumulator:.3e}")
-    print(f"Budget Error: {(budget_accumulator - total_budget) / total_budget * 100:.2f} %")
+    logger.info(f"Remaining budget after last iteration: {remaining_budget - epochs_list[-2] * current_flops:.3e}") # Last epochs value corresponds to fine-tuning, so we want the previous one in the list (-2)
+    logger.info(f"Budget for one-shot pruning: {total_budget:.3e}")
+    logger.info(f"Budget for iterative pruning: {budget_accumulator:.3e}")
+    logger.info(f"Budget Error: {(budget_accumulator - total_budget) / total_budget * 100:.2f} %")
 
-    print(f"One-shot speedup: x{one_shot_final_flops / initial_flops:.2f}")
-    print(f"Iterative speedup: x{flops_list[-1] / initial_flops:.2f}")
+    logger.info(f"One-shot speedup: x{initial_flops / one_shot_final_flops:.2f}")
+    logger.info(f"Iterative speedup: x{initial_flops / flops_list[-1]:.2f}")
+    logger.info(f"Iterative final prune ratio: {(initial_params - params_list[-1]) / initial_params * 100.0:.2f}")
+    logger.info(f"Iterative final accuracy: {regained_accuracy_list[-1] * 100.0:.2f}%")
+    logger.info(f"Iterative accuracy drop: {(regained_accuracy_list[-1] - regained_accuracy_list[0]) * 100.0:.2f}%")
+    logger.info(f"--- Total runtime: {runtime} (hours:min:sec) ---")
+
+    # Save results in json
+    results = {
+        'seed': seed,
+        'prune_rate': target_prune_ratio * 100.0,
+        'prune_iterations': num_iterations,
+        'pruned_params': params_list[-1],
+        'pruned_flops': flops_list[-1],
+        'best_acc': best_acc * 100.0,
+        'acc_drop': (regained_accuracy_list[-1] - regained_accuracy_list[0]) * 100.0,
+        'speed_up': initial_flops / flops_list[-1],
+        'real_prune_ratio': (initial_params - params_list[-1]) / initial_params * 100.0,
+        'runtime': runtime
+    }
+
+    save_results(output_dir=output_dir,
+                 results=results)
+
+    list_results = {
+        'epochs_list': epochs_list,
+        'flops_list': flops_list,
+        'params_list': params_list,
+        'raw_accuracy_list': raw_accuracy_list,
+        'regained_accuracy_list': regained_accuracy_list,
+    }
+
+    save_results(output_dir=output_dir,
+                 results=list_results,
+                 file_name='list_results')
     
-def main(seed: int = None,
-         prune_rate: float = 0.5):
+    # Reset logging module after each run of this function. This prevents unwanted logging
+    # behaviour when this function is called consecutive times during a single script run
+    logging.shutdown()
+    reload(logging)
+
+    return results
+
+def one_shot_prune(seed: int = None,
+                   prune_ratio: float = 0.5,
+                   train_epochs: int = 100):
     
     if seed is not None:
         torch.manual_seed(seed)
 
-    logger, output_dir = setup_logger()
+    logger, output_dir = setup_logger(
+        output_dir="my_runs/" + time.strftime("%Y-%m-%d-%H:%M") + "/one-shot/" + str(prune_ratio) 
+    )
 
     model, train_loader, test_loader, example_inputs, dataset_num_classes = setup_model_and_dataset(logger=logger)
 
-    for x in range(2):
-        pruner = get_pruner(model=model,
-                            example_inputs=example_inputs,
-                            dataset_num_classes=dataset_num_classes)
-        
-        prune(model=model,
-            example_inputs=example_inputs,
-            pruner=pruner,
-            test_loader=test_loader,
-            logger=logger,
-            prune_rate=prune_rate)
-        
-        retrain(model=model,
-                train_loader=train_loader,
-                test_loader=test_loader,
-                logger=logger,
-                output_dir=output_dir,
-                total_epochs=10)
+    # Measure original model flops and parameter counts (before pruning)
+    model.eval()
+    initial_flops, initial_params = tp.utils.count_ops_and_params(model, example_inputs=example_inputs)
+    initial_acc, initial_val_loss = eval(model, test_loader)
+    
+    pruner = get_pruner(model=model,
+                        example_inputs=example_inputs,
+                        dataset_num_classes=dataset_num_classes)
+    
+    # Save start time (for runtime calculation)
+    start_time = time.time()
+    
+    pruned_params, pruned_flops = prune(model=model,
+                                        example_inputs=example_inputs,
+                                        pruner=pruner,
+                                        test_loader=test_loader,
+                                        logger=logger,
+                                        prune_rate=prune_ratio)
+    
+    best_acc, last_acc = retrain(model=model,
+                                 train_loader=train_loader,
+                                 test_loader=test_loader,
+                                 logger=logger,
+                                 output_dir=output_dir,
+                                 total_epochs=train_epochs)
+    
+    # Calculate Runtime
+    runtime = str(timedelta( seconds=(time.time() - start_time) ))
+
+    # Save results in json
+    results = {
+        'seed': seed,
+        'prune_rate': prune_ratio * 100.0,
+        'prune_iterations': 1,
+        'pruned_params': pruned_params,
+        'pruned_flops': pruned_flops,
+        'best_acc': best_acc * 100.0,
+        'acc_drop': (best_acc - initial_acc) * 100.0,
+        'speed_up': initial_flops / pruned_flops,
+        'real_prune_ratio': (initial_params - pruned_params) / initial_params * 100.0,
+        'runtime': runtime
+    }
+
+    save_results(output_dir=output_dir,
+                 results=results)
+    
+    # Reset logging module after each run of this function. This prevents unwanted logging
+    # behaviour when this function is called consecutive times during a single script run
+    logging.shutdown()
+    reload(logging)
+
+    return results
 
 if __name__ == "__main__":
-    main(seed=1)
 
-    #dynamic_allocation(initial_epochs=200, num_iterations=1)
+    prune_rates = [0.1, 0.3, 0.5, 0.7, 0.9, 0.95]
+    
+
+    one_shot_final_flops = 6258198.0
+    
+    # dynamic_epoch_allocation_pruning(
+    #     seed=0,
+    #     target_prune_ratio=0.95,
+    #     one_shot_final_flops=one_shot_final_flops,
+    #     num_iterations=5
+    # )
+
+    for rate in prune_rates:
+        for seed in range(5):
+            one_shot_prune(seed=seed,
+                           prune_rate=rate)
