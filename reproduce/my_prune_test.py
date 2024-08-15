@@ -686,4 +686,4 @@ if __name__ == "__main__":
     for rate in prune_rates:
         for seed in range(5):
             one_shot_prune(seed=seed,
-                           prune_rate=rate)
+                           prune_ratio=rate)
