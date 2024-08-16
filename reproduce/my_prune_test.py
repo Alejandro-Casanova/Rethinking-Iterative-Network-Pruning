@@ -62,17 +62,21 @@ parser.add_argument("--iterative-steps", default=400, type=int)
 
 def progressive_pruning(pruner, 
                         model, 
-                        prune_rate, 
+                        prune_ratio, # If global base params is provided, prune_ratio should be w.r.t original model size. Otherwise, prune_ratio should be w.r.t model size at current iteration
                         example_inputs, 
-                        logger: Logger
+                        logger: Logger,
+                        global_base_params: float = None # Base params before first iteration of pruning. Using this as reference reduces accumulative pruning error
                         # device=None, 
                         # train_loader=None, 
                         # test_loader=None
                         ):
     model.eval()
-    base_ops, base_params = tp.utils.count_ops_and_params(model, example_inputs=example_inputs)
+    if global_base_params is None:
+        base_ops, base_params = tp.utils.count_ops_and_params(model, example_inputs=example_inputs)
+    else:
+        base_params = global_base_params
     current_prune_rate = 0.0
-    while current_prune_rate < prune_rate:
+    while current_prune_rate < prune_ratio:
         # if test_loader:
         #     pass
             # eval(model=model, test_loader=test_loader)
@@ -222,7 +226,8 @@ def prune(model,
           pruner,
           test_loader,
           logger: Logger,
-          prune_rate: float = 0.5,
+          prune_ratio: float = 0.5,
+          global_base_params: float = None,
           device: str = "cuda")-> tuple:
     model.eval()
     ori_ops, ori_size = tp.utils.count_ops_and_params(model, example_inputs=example_inputs)
@@ -231,9 +236,10 @@ def prune(model,
 
     progressive_pruning(pruner, 
                         model, 
-                        prune_rate=prune_rate, 
+                        prune_ratio=prune_ratio, 
                         example_inputs=example_inputs,
-                        logger=logger)
+                        logger=logger,
+                        global_base_params=global_base_params)
     
     del pruner # remove reference
     # logger.info(model) # Print whole model architecture
@@ -418,6 +424,12 @@ def static_allocation():
 
     print(f"Epochs for each iteration: E1={E1}, E2={E2}, E3={E3}, E4={E4}, E5={E5}")
 
+def calculate_global_prune_ratio(
+        step_val: float,
+        num_iterations: int
+):
+    return 1 - math.pow(1-step_val, num_iterations)
+
 def dynamic_epoch_allocation_pruning(
     seed: int = None,
     retraining_epochs = 60,
@@ -430,6 +442,9 @@ def dynamic_epoch_allocation_pruning(
     num_iterations = 5, # Pruning iterations
 ):
     
+    # Print script arguments
+    logger.info(f"SCRIPT LAUNCHED: seed: {seed}, target_prune_ratio: {target_prune_ratio}, num_iterations: {num_iterations}")
+
     # Set torch random seed
     if seed is not None:
         torch.manual_seed(seed)
@@ -464,6 +479,7 @@ def dynamic_epoch_allocation_pruning(
 
     # Calculate constant pruning ratio required to achieve target compression in the desired number of iterations
     pruning_ratio = 1 - math.pow((1 - target_prune_ratio), 1 / num_iterations)
+    logger.info(f"PRUNE STEP: {pruning_ratio}")
 
     # Save start time (for runtime calculation)
     start_time = time.time()
@@ -474,13 +490,18 @@ def dynamic_epoch_allocation_pruning(
                             example_inputs=example_inputs,
                             dataset_num_classes=dataset_num_classes)
         
+        # Calculate global pruning ratio, with respect to original model size
+        global_prune_ratio = calculate_global_prune_ratio(pruning_ratio, i+1)
+        logger.info(f"CURRENT GLOBAL PRUNE STEP: {global_prune_ratio}")
+
         # Prune the model and get new FLOPs value 
         pruned_params, new_flops = prune(model=model,
-                                            example_inputs=example_inputs,
-                                            pruner=pruner,
-                                            test_loader=test_loader,
-                                            logger=logger,
-                                            prune_rate=pruning_ratio)
+                                         example_inputs=example_inputs,
+                                         pruner=pruner,
+                                         test_loader=test_loader,
+                                         logger=logger,
+                                         prune_ratio=global_prune_ratio,
+                                         global_base_params=initial_params)
         
         # Evaluate pruned model performance
         pruned_acc, pruned_val_loss = eval(model, test_loader)
@@ -501,15 +522,17 @@ def dynamic_epoch_allocation_pruning(
         if i < num_iterations - 1:
             epochs = remaining_budget / new_flops / (num_iterations - i)
 
-            # Floor epochs variable 
-            epochs = int(epochs)
+            # Ceil epochs variable 
+            epochs = int(math.ceil(epochs))
 
         else:
             # Last iteration, use up the remaining budget
             epochs = remaining_budget / new_flops
 
-            # Round epochs variable on the last iteration
-            epochs = round(epochs)
+            # Round epochs variable in last iteration (to reduce budget error)
+            epochs = int(round(epochs))
+        
+        #epochs = 1 if epochs <= 0 else epochs # Epochs should be at least 1
 
         # Retrain Pruned Model for the dynamically calculated number of epochs
         best_acc, last_acc = retrain(model=model,
@@ -633,7 +656,7 @@ def one_shot_prune(seed: int = None,
                                         pruner=pruner,
                                         test_loader=test_loader,
                                         logger=logger,
-                                        prune_rate=prune_ratio)
+                                        prune_ratio=prune_ratio)
     
     best_acc, last_acc = retrain(model=model,
                                  train_loader=train_loader,
@@ -672,18 +695,21 @@ def one_shot_prune(seed: int = None,
 if __name__ == "__main__":
 
     prune_rates = [0.1, 0.3, 0.5, 0.7, 0.9, 0.95]
-    
+    iterative_steps_list = [2,3,5,7,10]
+    one_shot_flops = [104930890.0, 62791734.0, 41673948.0, 25498640.0, 9576348.0, 6258198.0]
 
-    one_shot_final_flops = 6258198.0
-    
-    # dynamic_epoch_allocation_pruning(
-    #     seed=0,
-    #     target_prune_ratio=0.95,
-    #     one_shot_final_flops=one_shot_final_flops,
-    #     num_iterations=5
-    # )
+    for idx, ratio in enumerate(prune_rates):
+        for iterative_steps in iterative_steps_list:
+            for seed in range(5):
+                dynamic_epoch_allocation_pruning(
+                    seed=seed,
+                    target_prune_ratio=ratio,
+                    one_shot_final_flops=one_shot_flops[idx],
+                    num_iterations=iterative_steps
+                )
 
-    for rate in prune_rates:
-        for seed in range(5):
-            one_shot_prune(seed=seed,
-                           prune_ratio=rate)
+    # One-shot pruning runs
+    # for rate in prune_rates:
+    #     for seed in range(5):
+    #         one_shot_prune(seed=seed,
+    #                        prune_ratio=rate)
