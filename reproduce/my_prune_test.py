@@ -442,9 +442,6 @@ def dynamic_epoch_allocation_pruning(
     num_iterations = 5, # Pruning iterations
 ):
     
-    # Print script arguments
-    logger.info(f"SCRIPT LAUNCHED: seed: {seed}, target_prune_ratio: {target_prune_ratio}, num_iterations: {num_iterations}")
-
     # Set torch random seed
     if seed is not None:
         torch.manual_seed(seed)
@@ -453,6 +450,9 @@ def dynamic_epoch_allocation_pruning(
     logger, output_dir = setup_logger(
         output_dir="my_runs/" + time.strftime("%Y-%m-%d-%H:%M") + "/dynamic-iterative/" + str(target_prune_ratio) 
     )
+
+    # Print script arguments
+    logger.info(f"SCRIPT LAUNCHED: seed: {seed}, target_prune_ratio: {target_prune_ratio}, num_iterations: {num_iterations}")
 
     # Load model and dataset
     model, train_loader, test_loader, example_inputs, dataset_num_classes = setup_model_and_dataset(logger=logger)
