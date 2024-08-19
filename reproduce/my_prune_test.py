@@ -60,53 +60,52 @@ parser.add_argument("--iterative-steps", default=400, type=int)
 
 #args = parser.parse_args()
 
-def progressive_pruning(pruner, 
-                        model, 
-                        prune_ratio, # If global base params is provided, prune_ratio should be w.r.t original model size. Otherwise, prune_ratio should be w.r.t model size at current iteration
-                        example_inputs, 
-                        logger: Logger,
-                        global_base_params: float = None # Base params before first iteration of pruning. Using this as reference reduces accumulative pruning error
-                        # device=None, 
-                        # train_loader=None, 
-                        # test_loader=None
-                        ):
+def progressive_pruning_for_flops(
+    pruner, 
+    model, 
+    speed_up, 
+    example_inputs,
+    logger: Logger,
+    global_base_flops: float = None # Base flops before first iteration of pruning. Using this as reference reduces accumulative pruning error
+   
+):
+    logger.info("Pruning for flops.")
+    model.eval()
+    if global_base_flops is None:
+        base_ops, _ = tp.utils.count_ops_and_params(model, example_inputs=example_inputs)
+    else:
+        base_ops = global_base_flops
+    
+    current_speed_up = 1
+    while current_speed_up < speed_up:
+        pruner.step()
+
+        pruned_ops, _ = tp.utils.count_ops_and_params(model, example_inputs=example_inputs)
+        current_speed_up = float(base_ops) / pruned_ops
+        if pruner.current_step == pruner.iterative_steps:
+            logger.info("Reached max iterative steps in progressive pruner.")
+            break
+    return current_speed_up
+
+def progressive_pruning_for_params(
+    pruner, 
+    model, 
+    prune_ratio, # If global base params is provided, prune_ratio should be w.r.t original model size. Otherwise, prune_ratio should be w.r.t model size at current iteration
+    example_inputs, 
+    logger: Logger,
+    global_base_params: float = None # Base params before first iteration of pruning. Using this as reference reduces accumulative pruning error
+):
+    logger.info("Pruning for params.")
     model.eval()
     if global_base_params is None:
-        base_ops, base_params = tp.utils.count_ops_and_params(model, example_inputs=example_inputs)
+        _, base_params = tp.utils.count_ops_and_params(model, example_inputs=example_inputs)
     else:
         base_params = global_base_params
     current_prune_rate = 0.0
     while current_prune_rate < prune_ratio:
-        # if test_loader:
-        #     pass
-            # eval(model=model, test_loader=test_loader)
-            # acc, val_loss = eval(model, test_loader, device=device)
-            # args.logger.info(
-            #     "Speedup {:.2f}/{:.2f}, Acc={:.4f}, Val Loss={:.4f}".format(
-            #         current_speed_up, speed_up, acc, val_loss
-            #     )
-            # )
-        # if args.method == "obdc":
-        #     model.zero_grad()
-        #     imp=pruner.importance
-        #     imp._prepare_model(model, pruner)
-        #     for k, (imgs, lbls) in enumerate(train_loader):
-        #         if k>=10: break
-        #         imgs = imgs.to(args.device)
-        #         lbls = lbls.to(args.device)
-        #         output = model(imgs)
-        #         sampled_y = torch.multinomial(torch.nn.functional.softmax(output.cpu().data, dim=1),
-        #                                           1).squeeze().to(args.device)
-        #         loss_sample = F.cross_entropy(output, sampled_y)
-        #         loss_sample.backward()
-        #         imp.step()
-        #     pruner.step()
-        #     imp._rm_hooks(model)
-        #     imp._clear_buffer()
-        # else:
         pruner.step()
 
-        pruned_ops, pruned_params = tp.utils.count_ops_and_params(model, example_inputs=example_inputs)
+        _, pruned_params = tp.utils.count_ops_and_params(model, example_inputs=example_inputs)
         current_prune_rate = (float(base_params) - pruned_params) / base_params
         # logger.debug(f"Current Prune Rate: {current_prune_rate:.4f}")
         if pruner.current_step == pruner.iterative_steps:
@@ -131,6 +130,28 @@ def eval(model, test_loader, device=None):
             correct += (pred == target).sum()
             total += len(target)
     return (correct / total).item(), (loss / total).item()
+
+def estimate_latency(model, example_inputs, repetitions=50):
+    import numpy as np
+    starter, ender = torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True)
+    timings=np.zeros((repetitions,1))
+
+    for _ in range(5):
+        _ = model(example_inputs)
+
+    with torch.no_grad():
+        for rep in range(repetitions):
+            starter.record()
+            _ = model(example_inputs)
+            ender.record()
+            # WAIT FOR GPU SYNC
+            torch.cuda.synchronize()
+            curr_time = starter.elapsed_time(ender)
+            timings[rep] = curr_time
+
+    mean_syn = np.sum(timings) / repetitions
+    std_syn = np.std(timings)
+    return mean_syn, std_syn
 
 def get_pruner(model, 
                example_inputs,
@@ -226,20 +247,34 @@ def prune(model,
           pruner,
           test_loader,
           logger: Logger,
-          prune_ratio: float = 0.5,
+          prune_ratio: float = 0.5, # Either prune ratio or speed_up must be provided. If both are present, speed_up is prioritized
+          speed_up: float = None,
           global_base_params: float = None,
+          global_base_flops: float = None,
           device: str = "cuda")-> tuple:
     model.eval()
     ori_ops, ori_size = tp.utils.count_ops_and_params(model, example_inputs=example_inputs)
     ori_acc, ori_val_loss = eval(model, test_loader, device=device)
     logger.info("Pruning...")
 
-    progressive_pruning(pruner, 
-                        model, 
-                        prune_ratio=prune_ratio, 
-                        example_inputs=example_inputs,
-                        logger=logger,
-                        global_base_params=global_base_params)
+    if speed_up is not None:
+        progressive_pruning_for_flops(
+            pruner,
+            model,
+            speed_up=speed_up,
+            example_inputs=example_inputs,
+            logger=logger,
+            global_base_flops=global_base_flops
+        )
+    else:
+        progressive_pruning_for_params(
+            pruner, 
+            model, 
+            prune_ratio=prune_ratio, 
+            example_inputs=example_inputs,
+            logger=logger,
+            global_base_params=global_base_params
+        )
     
     del pruner # remove reference
     # logger.info(model) # Print whole model architecture
@@ -430,6 +465,12 @@ def calculate_global_prune_ratio(
 ):
     return 1 - math.pow(1-step_val, num_iterations)
 
+def calculate_global_speed_up(
+        step_val: float,
+        num_iterations: int
+):
+    return math.pow(step_val, num_iterations)
+
 def dynamic_epoch_allocation_pruning(
     seed: int = None,
     retraining_epochs = 60,
@@ -437,7 +478,8 @@ def dynamic_epoch_allocation_pruning(
     finetuning_lr: float = 0.001,
     finetuning_lr_decay_milestones: str = "20",
     #initial_flops = 1e9,  # example initial FLOPs of unpruned model
-    target_prune_ratio = 0.5,
+    target_prune_ratio: float = 0.5,
+    target_speed_up: float = None,
     one_shot_final_flops = 1e9 * 0.6, # FLOPs of the final model obtained through one-shot pruning
     num_iterations = 5, # Pruning iterations
 ):
@@ -445,6 +487,10 @@ def dynamic_epoch_allocation_pruning(
     # Set torch random seed
     if seed is not None:
         torch.manual_seed(seed)
+
+    # Prune ratio is ignored if target_speed_up is provided
+    if target_speed_up is not None:
+        target_prune_ratio = None
 
     # Setup logger
     logger, output_dir = setup_logger(
@@ -462,6 +508,14 @@ def dynamic_epoch_allocation_pruning(
     initial_flops, initial_params = tp.utils.count_ops_and_params(model, example_inputs=example_inputs)
     initial_acc, initial_val_loss = eval(model, test_loader)
 
+    # Calculate model latency before pruning
+    logger.info("Calculating model latency...")
+    latency_original_avg, latency_original_std = estimate_latency(
+        model=model,
+        example_inputs=example_inputs
+    )
+    logger.info(f"Latency before pruning: {latency_original_avg} ± {latency_original_std}")
+
     # Total computational budget
     total_budget = retraining_epochs * one_shot_final_flops # This is the cost of one-shot pruning
 
@@ -475,11 +529,19 @@ def dynamic_epoch_allocation_pruning(
     params_list = [initial_params]
     raw_accuracy_list = [initial_acc] # Model accuracy just after pruning
     regained_accuracy_list = [initial_acc] # Model accuracy after pruning and retraining
+    latency_list = [[latency_original_avg, latency_original_std]]
     # TODO also save loss...?
 
-    # Calculate constant pruning ratio required to achieve target compression in the desired number of iterations
-    pruning_ratio = 1 - math.pow((1 - target_prune_ratio), 1 / num_iterations)
-    logger.info(f"PRUNE STEP: {pruning_ratio}")
+    pruning_ratio = None
+    speed_up = None
+    if target_speed_up is None:
+        # Calculate constant pruning ratio required to achieve target compression in the desired number of iterations
+        pruning_ratio = 1 - math.pow((1 - target_prune_ratio), 1 / num_iterations)
+        logger.info(f"PRUNE STEP: {pruning_ratio}")
+    else:
+        # Calculate constant speed_up that must be applied at each iteration to achieve target speed_up after the last iteration
+        speed_up = math.pow(target_speed_up, 1 / num_iterations)
+        logger.info(f"SPEEDUP STEP: {speed_up}")
 
     # Save start time (for runtime calculation)
     start_time = time.time()
@@ -490,9 +552,16 @@ def dynamic_epoch_allocation_pruning(
                             example_inputs=example_inputs,
                             dataset_num_classes=dataset_num_classes)
         
-        # Calculate global pruning ratio, with respect to original model size
-        global_prune_ratio = calculate_global_prune_ratio(pruning_ratio, i+1)
-        logger.info(f"CURRENT GLOBAL PRUNE STEP: {global_prune_ratio}")
+        global_prune_ratio = None
+        global_speed_up = None
+        if speed_up is None:
+            # Calculate global pruning ratio, with respect to original model size
+            global_prune_ratio = calculate_global_prune_ratio(pruning_ratio, i+1)
+            logger.info(f"CURRENT GLOBAL PRUNE STEP: {global_prune_ratio}")
+        else:
+            # Calculate global speedup, with respect to original model flops
+            global_speed_up = calculate_global_speed_up(speed_up, i+1)
+            logger.info(f"CURRENT GLOBAL SPEEDUP STEP: {global_speed_up}")
 
         # Prune the model and get new FLOPs value 
         pruned_params, new_flops = prune(model=model,
@@ -501,7 +570,9 @@ def dynamic_epoch_allocation_pruning(
                                          test_loader=test_loader,
                                          logger=logger,
                                          prune_ratio=global_prune_ratio,
-                                         global_base_params=initial_params)
+                                         global_base_params=initial_params,
+                                         target_speed_up=global_speed_up,
+                                         global_base_flops=initial_flops)
         
         # Evaluate pruned model performance
         pruned_acc, pruned_val_loss = eval(model, test_loader)
@@ -543,9 +614,18 @@ def dynamic_epoch_allocation_pruning(
                                      total_epochs=epochs,
                                      lr_decay_milestones=None)
         
+        # Calculate model latency after pruning
+        logger.info("Calculating model latency...")
+        latency_pruned_avg, latency_pruned_std = estimate_latency(
+            model=model,
+            example_inputs=example_inputs
+        )
+        logger.info(f"Latency after pruning: {latency_pruned_avg} ± {latency_pruned_std}")
+
         # Append results to list
         epochs_list.append(epochs)
         regained_accuracy_list.append(last_acc)
+        latency_list.append([latency_pruned_avg, latency_pruned_std])
         
         # Update current FLOPs
         current_flops = new_flops
@@ -593,7 +673,8 @@ def dynamic_epoch_allocation_pruning(
     # Save results in json
     results = {
         'seed': seed,
-        'prune_rate': target_prune_ratio * 100.0,
+        'prune_rate': target_prune_ratio * 100.0 if target_prune_ratio is not None else None,
+        'target_speed_up': target_speed_up,
         'prune_iterations': num_iterations,
         'pruned_params': params_list[-1],
         'pruned_flops': flops_list[-1],
@@ -601,7 +682,9 @@ def dynamic_epoch_allocation_pruning(
         'acc_drop': (regained_accuracy_list[-1] - regained_accuracy_list[0]) * 100.0,
         'speed_up': initial_flops / flops_list[-1],
         'real_prune_ratio': (initial_params - params_list[-1]) / initial_params * 100.0,
-        'runtime': runtime
+        'runtime': runtime,
+        'latency_original': [latency_original_avg, latency_original_std],
+        'latency_pruned': [latency_pruned_avg, latency_pruned_std]
     }
 
     save_results(output_dir=output_dir,
@@ -628,10 +711,15 @@ def dynamic_epoch_allocation_pruning(
 
 def one_shot_prune(seed: int = None,
                    prune_ratio: float = 0.5,
+                   target_speed_up: float = None, # If provided, pruning will target this speed_up value. Otherwise, prune_ratio value will be targeted.
                    train_epochs: int = 100):
     
     if seed is not None:
         torch.manual_seed(seed)
+    
+    # Prune ratio is ignored if target_speed_up is provided
+    if target_speed_up is not None:
+        prune_ratio = None
 
     logger, output_dir = setup_logger(
         output_dir="my_runs/" + time.strftime("%Y-%m-%d-%H:%M") + "/one-shot/" + str(prune_ratio) 
@@ -643,7 +731,15 @@ def one_shot_prune(seed: int = None,
     model.eval()
     initial_flops, initial_params = tp.utils.count_ops_and_params(model, example_inputs=example_inputs)
     initial_acc, initial_val_loss = eval(model, test_loader)
-    
+
+    # Calculate model latency before pruning
+    logger.info("Calculating model latency...")
+    latency_original_avg, latency_original_std = estimate_latency(
+        model=model,
+        example_inputs=example_inputs
+    )
+    logger.info(f"Latency before pruning: {latency_original_avg} ± {latency_original_std}")
+
     pruner = get_pruner(model=model,
                         example_inputs=example_inputs,
                         dataset_num_classes=dataset_num_classes)
@@ -656,7 +752,8 @@ def one_shot_prune(seed: int = None,
                                         pruner=pruner,
                                         test_loader=test_loader,
                                         logger=logger,
-                                        prune_ratio=prune_ratio)
+                                        prune_ratio=prune_ratio,
+                                        speed_up=target_speed_up)
     
     best_acc, last_acc = retrain(model=model,
                                  train_loader=train_loader,
@@ -668,10 +765,19 @@ def one_shot_prune(seed: int = None,
     # Calculate Runtime
     runtime = str(timedelta( seconds=(time.time() - start_time) ))
 
+    # Calculate model latency after pruning
+    logger.info("Calculating model latency...")
+    latency_pruned_avg, latency_pruned_std = estimate_latency(
+        model=model,
+        example_inputs=example_inputs
+    )
+    logger.info(f"Latency after pruning: {latency_pruned_avg} ± {latency_pruned_std}")
+
     # Save results in json
     results = {
         'seed': seed,
-        'prune_rate': prune_ratio * 100.0,
+        'prune_rate': prune_ratio * 100.0 if prune_ratio is not None else None,
+        'target_speed_up': target_speed_up,
         'prune_iterations': 1,
         'pruned_params': pruned_params,
         'pruned_flops': pruned_flops,
@@ -679,7 +785,9 @@ def one_shot_prune(seed: int = None,
         'acc_drop': (best_acc - initial_acc) * 100.0,
         'speed_up': initial_flops / pruned_flops,
         'real_prune_ratio': (initial_params - pruned_params) / initial_params * 100.0,
-        'runtime': runtime
+        'runtime': runtime,
+        'latency_original': [latency_original_avg, latency_original_std],
+        'latency_pruned': [latency_pruned_avg, latency_pruned_std]
     }
 
     save_results(output_dir=output_dir,
@@ -694,6 +802,16 @@ def one_shot_prune(seed: int = None,
 
 if __name__ == "__main__":
 
+    dynamic_epoch_allocation_pruning(
+        seed=0,
+        finetuning_epochs=0,
+        retraining_epochs=10,
+        one_shot_final_flops=62791734.0,
+        target_speed_up=2.0244,
+        num_iterations=3,
+    )
+
+    exit()
     prune_rates = [0.1, 0.3, 0.5, 0.7, 0.9, 0.95]
     iterative_steps_list = [2,3,5,7,10]
     one_shot_flops = [104930890.0, 62791734.0, 41673948.0, 25498640.0, 9576348.0, 6258198.0]
