@@ -35,3 +35,4 @@ cache/
 */nohup.out
 
 reproduce/my_runs/*
+*.html

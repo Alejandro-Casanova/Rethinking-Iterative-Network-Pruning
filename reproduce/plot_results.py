@@ -9,6 +9,7 @@ current_dir = Path.cwd()
 results_dir = current_dir / "my_runs"
 
 def time_string_to_minutes(time_str: str) -> float:
+    # print(time_str)
     # Split the time string into hours, minutes, and seconds.decimals
     hours, minutes, seconds = time_str.split(':')
     
@@ -28,7 +29,7 @@ def plot_results(param: Literal["mu", "mu_spec", "mu_depth"] = "mu",
                                  "fix-no-clamp", "fix-no-clamp-no-mu-norm", "fix-no-depth-first"] = "no-fix"):
 
   # files = list(results_dir.glob(f'**/{select}/{param}/**/*.json'))
-  files = list(results_dir.glob(f'**/*.json'))
+  files = list(results_dir.glob(f'**/results.json'))
 
   data = {}
   final_data = []
@@ -71,6 +72,7 @@ def plot_results(param: Literal["mu", "mu_spec", "mu_depth"] = "mu",
   #  json.dump(final_data , fp) 
 
   df = pd.DataFrame(final_data)
+  # print(df)
   df['runtime'] = df['runtime'].apply(time_string_to_minutes) # Convert runtime string to float (minutes)
   df = df.sort_values(by='prune_rate')
   print(df)
@@ -83,6 +85,44 @@ def plot_results(param: Literal["mu", "mu_spec", "mu_depth"] = "mu",
   df_std = grouped_df.std().reset_index()
   print(df_mean)
   print(df_std)
+
+  # Values to include in pivot table
+  values_to_include = ['runtime']
+
+  # Pivot table with prune_rate as columns and prune_iterations as rows, averaging all columns
+  pivot_table_mean = df.pivot_table(index='prune_iterations', columns='prune_rate', values=values_to_include, aggfunc='mean').round(2)
+  pivot_table_std = df.pivot_table(index='prune_iterations', columns='prune_rate', values=values_to_include, aggfunc='std').round(2)
+
+  # Combine the mean and standard deviation tables into a single table
+  pivot_table_combined = pd.DataFrame()
+
+  # Iterating through columns to combine mean and std
+  for value in values_to_include:
+    for prune_rate in pivot_table_mean[value].columns:
+        mean_str = pivot_table_mean[value][prune_rate].map('{:.2f}'.format)
+        std_str = pivot_table_std[value][prune_rate].map('{:.2f}'.format)
+        combined = mean_str + " ± " + std_str
+        pivot_table_combined[(value, prune_rate)] = combined
+
+  # Set the index to prune_iterations
+  pivot_table_combined.index = pivot_table_mean.index
+
+  # Define a function to highlight the maximum value in a DataFrame column
+  def highlight_max(s: pd.Series):
+      aux = s.apply(str.split, args="±")
+      aux.apply(list.reverse)
+      aux = aux.apply(list.pop)
+      aux = aux.apply(float)
+      is_max = aux == aux.max()
+      return ['font-weight: bold; color: red;' if v else '' for v in is_max]
+  
+  # TODO function: highlight second max
+
+  # Apply the highlight_max function to each column
+  styled_pivot_table = pivot_table_combined.style.apply(highlight_max, axis=0)
+
+  # Save the styled DataFrame to an HTML file
+  styled_pivot_table.to_html('styled_pivot_table.html')
 
   return
 
