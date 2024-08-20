@@ -1,15 +1,19 @@
-from torchvision.models import resnet50 as model_entry
+from torchvision.models import resnet34 as model_entry
 import sys, os
 import time
 sys.path.append(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 import torch_pruning as tp
 import torch
-
+import registry
 
 def main():
 
     model = model_entry(pretrained=True).to('cuda:0')
     example_input = torch.rand(32, 3, 224, 224).to('cuda:0')
+
+    # model = registry.get_model("resnet56", num_classes=10, pretrained=True, target_dataset="cifar10").to('cuda:0')
+    # example_input = torch.rand(1, 3, 32, 32).to('cuda:0')
+
     importance = tp.importance.MagnitudeImportance(p=2)
     iterative_steps = 20
     pruner = tp.pruner.MagnitudePruner(

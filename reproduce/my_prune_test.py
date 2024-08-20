@@ -239,6 +239,7 @@ def setup_model_and_dataset(logger: Logger,
     model = model.to(device)
 
     example_inputs = train_dst[0][0].unsqueeze(0).to(device)
+    logger.info(f"Shape of Example Inputs: {example_inputs.shape}")
 
     return model, train_loader, test_loader, example_inputs, num_classes
 
@@ -480,8 +481,9 @@ def dynamic_epoch_allocation_pruning(
     #initial_flops = 1e9,  # example initial FLOPs of unpruned model
     target_prune_ratio: float = 0.5,
     target_speed_up: float = None,
-    one_shot_final_flops = 1e9 * 0.6, # FLOPs of the final model obtained through one-shot pruning
-    num_iterations = 5, # Pruning iterations
+    one_shot_final_flops: float = 1e9 * 0.6, # FLOPs of the final model obtained through one-shot pruning
+    num_iterations: int = 5, # Pruning iterations
+    experiment_name: str = "dynamic-iterative", # Will be used in the output path, and will later serve to filter out results
 ):
     
     # Set torch random seed
@@ -494,7 +496,7 @@ def dynamic_epoch_allocation_pruning(
 
     # Setup logger
     logger, output_dir = setup_logger(
-        output_dir="my_runs/" + time.strftime("%Y-%m-%d-%H:%M") + "/dynamic-iterative/" + str(target_prune_ratio) 
+        output_dir="my_runs/" + time.strftime("%Y-%m-%d-%H:%M") + f"/{experiment_name}/" + str(target_prune_ratio) 
     )
 
     # Print script arguments
@@ -805,14 +807,14 @@ def one_shot_prune(seed: int = None,
 
 if __name__ == "__main__":
 
-    dynamic_epoch_allocation_pruning(
-        seed=0,
-        finetuning_epochs=40,
-        retraining_epochs=60,
-        one_shot_final_flops=62791734.0,
-        target_speed_up=2.0244052186869057,
-        num_iterations=5,
-    )
+    # dynamic_epoch_allocation_pruning(
+    #     seed=0,
+    #     finetuning_epochs=40,
+    #     retraining_epochs=60,
+    #     one_shot_final_flops=62791734.0,
+    #     target_speed_up=2.0244052186869057,
+    #     num_iterations=5,
+    # )
 
     prune_rates = [0.1, 0.3, 0.5, 0.7, 0.9, 0.95]
     speed_ups = [1.211425, 2.024405, 3.050249, 4.985204, 13.273945, 20.311904]
@@ -826,7 +828,8 @@ if __name__ == "__main__":
                     seed=seed,
                     target_speed_up=speedup,
                     one_shot_final_flops=one_shot_flops[idx],
-                    num_iterations=iterative_steps
+                    num_iterations=iterative_steps,
+                    experiment_name="dynamic-iterative-flops"
                 )
 
     # One-shot pruning runs
