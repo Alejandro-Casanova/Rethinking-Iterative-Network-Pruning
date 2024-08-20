@@ -23,13 +23,12 @@ def time_string_to_minutes(time_str: str) -> float:
     
     return total_minutes
 
-def plot_results(param: Literal["mu", "mu_spec", "mu_depth"] = "mu", 
-                 error_var: Literal["ae_n", "rmse_a", "rmse_z"] = "ae_n", 
-                 select: Literal["no-fix", "fix-no-mu-norm", "fix", "fix-line-strict", 
-                                 "fix-no-clamp", "fix-no-clamp-no-mu-norm", "fix-no-depth-first"] = "no-fix"):
-
-  # files = list(results_dir.glob(f'**/{select}/{param}/**/*.json'))
-  files = list(results_dir.glob(f'**/results.json'))
+def plot_results(
+      filter: str = None
+):
+  
+  search_str = "**/results.json" if filter is None else f'**/{filter}/**/results.json'
+  files = list(results_dir.glob(search_str))
 
   data = {}
   final_data = []
@@ -161,4 +160,4 @@ def plot_results(param: Literal["mu", "mu_spec", "mu_depth"] = "mu",
 
 if __name__ == "__main__":
 
-  plot_results()
+  plot_results('one-shot')

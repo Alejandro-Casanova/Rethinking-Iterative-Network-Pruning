@@ -498,7 +498,7 @@ def dynamic_epoch_allocation_pruning(
     )
 
     # Print script arguments
-    logger.info(f"SCRIPT LAUNCHED: seed: {seed}, target_prune_ratio: {target_prune_ratio}, num_iterations: {num_iterations}")
+    logger.info(f"SCRIPT LAUNCHED: seed: {seed}, target_prune_ratio: {target_prune_ratio}, target_speedup: {target_speed_up}, num_iterations: {num_iterations}")
 
     # Load model and dataset
     model, train_loader, test_loader, example_inputs, dataset_num_classes = setup_model_and_dataset(logger=logger)
@@ -571,7 +571,7 @@ def dynamic_epoch_allocation_pruning(
                                          logger=logger,
                                          prune_ratio=global_prune_ratio,
                                          global_base_params=initial_params,
-                                         target_speed_up=global_speed_up,
+                                         speed_up=global_speed_up,
                                          global_base_flops=initial_flops)
         
         # Evaluate pruned model performance
@@ -684,7 +684,9 @@ def dynamic_epoch_allocation_pruning(
         'real_prune_ratio': (initial_params - params_list[-1]) / initial_params * 100.0,
         'runtime': runtime,
         'latency_original': [latency_original_avg, latency_original_std],
-        'latency_pruned': [latency_pruned_avg, latency_pruned_std]
+        'latency_pruned': [latency_pruned_avg, latency_pruned_std],
+        'latency_delta': [latency_pruned_avg-latency_original_avg, math.pow(latency_original_std*latency_original_std + latency_pruned_std*latency_pruned_std, 0.5)],
+        'budget_error': (budget_accumulator - total_budget) / total_budget * 100
     }
 
     save_results(output_dir=output_dir,
@@ -696,6 +698,7 @@ def dynamic_epoch_allocation_pruning(
         'params_list': params_list,
         'raw_accuracy_list': raw_accuracy_list,
         'regained_accuracy_list': regained_accuracy_list,
+        'latency_list': latency_list
     }
 
     save_results(output_dir=output_dir,
@@ -804,24 +807,24 @@ if __name__ == "__main__":
 
     dynamic_epoch_allocation_pruning(
         seed=0,
-        finetuning_epochs=0,
-        retraining_epochs=10,
+        finetuning_epochs=40,
+        retraining_epochs=60,
         one_shot_final_flops=62791734.0,
-        target_speed_up=2.0244,
-        num_iterations=3,
+        target_speed_up=2.0244052186869057,
+        num_iterations=5,
     )
 
-    exit()
     prune_rates = [0.1, 0.3, 0.5, 0.7, 0.9, 0.95]
+    speed_ups = [1.211425, 2.024405, 3.050249, 4.985204, 13.273945, 20.311904]
     iterative_steps_list = [2,3,5,7,10]
     one_shot_flops = [104930890.0, 62791734.0, 41673948.0, 25498640.0, 9576348.0, 6258198.0]
 
-    for idx, ratio in enumerate(prune_rates):
+    for idx, speedup in enumerate(speed_ups):
         for iterative_steps in iterative_steps_list:
             for seed in range(5):
                 dynamic_epoch_allocation_pruning(
                     seed=seed,
-                    target_prune_ratio=ratio,
+                    target_speed_up=speedup,
                     one_shot_final_flops=one_shot_flops[idx],
                     num_iterations=iterative_steps
                 )
