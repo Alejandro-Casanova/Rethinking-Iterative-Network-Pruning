@@ -491,8 +491,8 @@ def dynamic_epoch_allocation_pruning(
         torch.manual_seed(seed)
 
     # Prune ratio is ignored if target_speed_up is provided
-    if target_speed_up is not None:
-        target_prune_ratio = None
+    # if target_speed_up is not None:
+    #     target_prune_ratio = None
 
     # Setup logger
     logger, output_dir = setup_logger(
