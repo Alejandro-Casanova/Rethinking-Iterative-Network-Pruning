@@ -9,26 +9,36 @@ current_dir = Path.cwd()
 results_dir = current_dir / "my_runs"
 
 def time_string_to_minutes(time_str: str) -> float:
-    # print(time_str)
-    # Split the time string into hours, minutes, and seconds.decimals
-    hours, minutes, seconds = time_str.split(':')
-    
-    # Convert each part to float
-    hours = float(hours)
-    minutes = float(minutes)
-    seconds = float(seconds)
-    
-    # Convert hours and seconds to minutes
-    total_minutes = (hours * 60) + minutes + (seconds / 60)
-    
-    return total_minutes
+  # print(time_str)
+  # Split the time string into hours, minutes, and seconds.decimals
+  hours, minutes, seconds = time_str.split(':')
+  
+  # Convert each part to float
+  hours = float(hours)
+  minutes = float(minutes)
+  seconds = float(seconds)
+  
+  # Convert hours and seconds to minutes
+  total_minutes = (hours * 60) + minutes + (seconds / 60)
+  
+  return total_minutes
 
 def plot_results(
-      filter: str = None
+  filter_list: list = None, # Select filter from results directory, after date. E.g. 'one-shot', 'dynamic-iterative'...
+  plot_variables_list: list = ['acc_drop'],
+  higlight_min: bool = False # Higlight min values, instead of max
 ):
-  
-  search_str = "**/results.json" if filter is None else f'**/{filter}/**/results.json'
-  files = list(results_dir.glob(search_str))
+  if isinstance(filter_list, str):
+    print("Single String passed instead of list... But don't worry, I can handle it ;)")
+    filter_list = [filter_list]
+  if isinstance(plot_variables_list, str):
+    print("Single String passed instead of list... But don't worry, I can handle it ;)")
+    plot_variables_list = [plot_variables_list]
+
+  files = []
+  for filter in filter_list:
+    search_str = "**/results.json" if filter is None else f'**/{filter}/**/results.json'
+    files += list(results_dir.glob(search_str))
 
   data = {}
   final_data = []
@@ -74,6 +84,10 @@ def plot_results(
   # print(df)
   df['runtime'] = df['runtime'].apply(time_string_to_minutes) # Convert runtime string to float (minutes)
   df = df.sort_values(by='prune_rate')
+  # print(df)
+
+  # Drop columns I can not handle for now
+  df = df.drop(columns=['latency_pruned', 'latency_original', 'latency_delta'])
   print(df)
 
   # Group by the 'Category' column and calculate the mean of each group
@@ -86,7 +100,7 @@ def plot_results(
   print(df_std)
 
   # Values to include in pivot table
-  values_to_include = ['runtime']
+  values_to_include = plot_variables_list
 
   # Pivot table with prune_rate as columns and prune_iterations as rows, averaging all columns
   pivot_table_mean = df.pivot_table(index='prune_iterations', columns='prune_rate', values=values_to_include, aggfunc='mean').round(2)
@@ -107,18 +121,31 @@ def plot_results(
   pivot_table_combined.index = pivot_table_mean.index
 
   # Define a function to highlight the maximum value in a DataFrame column
-  def highlight_max(s: pd.Series):
+  def highlight(highlight_min: bool = False):
+    def highlight_fun(s: pd.Series):
       aux = s.apply(str.split, args="±")
       aux.apply(list.reverse)
       aux = aux.apply(list.pop)
       aux = aux.apply(float)
-      is_max = aux == aux.max()
-      return ['font-weight: bold; color: red;' if v else '' for v in is_max]
+      if highlight_min:
+        is_highlighted = aux == aux.min()
+        is_highlighted_2 = aux == aux.nsmallest(2).iloc[-1]
+      else:
+        is_highlighted = aux == aux.max()
+        is_highlighted_2 = aux == aux.nlargest(2).iloc[-1]
+        
+      first_value_highlighted = ['font-weight: bold; color: red;' if v else '' for v in is_highlighted]
+      second_value_highlighted = ['font-weight: bold; color: yellow;' if v else '' for v in is_highlighted_2]
+      return [item1 if item1 != '' else item2 for item1, item2 in zip(first_value_highlighted, second_value_highlighted)]
+    return highlight_fun
   
   # TODO function: highlight second max
 
   # Apply the highlight_max function to each column
-  styled_pivot_table = pivot_table_combined.style.apply(highlight_max, axis=0)
+  styled_pivot_table = pivot_table_combined.style.apply(
+    highlight(higlight_min),
+    axis=0
+  )
 
   # Save the styled DataFrame to an HTML file
   styled_pivot_table.to_html('styled_pivot_table.html')
@@ -160,4 +187,6 @@ def plot_results(
 
 if __name__ == "__main__":
 
-  plot_results('one-shot')
+  selection_filters = ['one-shot', 'dynamic-iterative-flops']
+  plot_variables_list = ['runtime']
+  plot_results(selection_filters, plot_variables_list, higlight_min=False)

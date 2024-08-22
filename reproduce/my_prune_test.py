@@ -816,7 +816,7 @@ if __name__ == "__main__":
     #     num_iterations=5,
     # )
 
-    prune_rates = [0.1, 0.3, 0.5, 0.7, 0.9, 0.95]
+    prune_ratios = [0.1, 0.3, 0.5, 0.7, 0.9, 0.95]
     speed_ups = [1.211425, 2.024405, 3.050249, 4.985204, 13.273945, 20.311904]
     iterative_steps_list = [2,3,5,7,10]
     one_shot_flops = [104930890.0, 62791734.0, 41673948.0, 25498640.0, 9576348.0, 6258198.0]
@@ -827,6 +827,7 @@ if __name__ == "__main__":
                 dynamic_epoch_allocation_pruning(
                     seed=seed,
                     target_speed_up=speedup,
+                    target_prune_ratio=prune_ratios[idx],
                     one_shot_final_flops=one_shot_flops[idx],
                     num_iterations=iterative_steps,
                     experiment_name="dynamic-iterative-flops"
