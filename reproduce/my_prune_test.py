@@ -821,17 +821,27 @@ if __name__ == "__main__":
     iterative_steps_list = [2,3,5,7,10]
     one_shot_flops = [104930890.0, 62791734.0, 41673948.0, 25498640.0, 9576348.0, 6258198.0]
 
-    for idx, speedup in enumerate(speed_ups):
-        for iterative_steps in iterative_steps_list:
-            for seed in range(5):
-                dynamic_epoch_allocation_pruning(
-                    seed=seed,
-                    target_speed_up=speedup,
-                    target_prune_ratio=prune_ratios[idx],
-                    one_shot_final_flops=one_shot_flops[idx],
-                    num_iterations=iterative_steps,
-                    experiment_name="dynamic-iterative-flops"
-                )
+    # for idx, speedup in enumerate(speed_ups):
+    #     for iterative_steps in iterative_steps_list:
+    #         for seed in range(5):
+    #             dynamic_epoch_allocation_pruning(
+    #                 seed=seed,
+    #                 target_speed_up=speedup,
+    #                 target_prune_ratio=prune_ratios[idx],
+    #                 one_shot_final_flops=one_shot_flops[idx],
+    #                 num_iterations=iterative_steps,
+    #                 experiment_name="dynamic-iterative-flops"
+    #             )
+
+    for seed in range(5, 20):
+        dynamic_epoch_allocation_pruning(
+            seed=seed,
+            target_speed_up=20.311904,
+            target_prune_ratio=0.95,
+            one_shot_final_flops=6258198.0,
+            num_iterations=10,
+            experiment_name="dynamic-iterative-flops"
+        )
 
     # One-shot pruning runs
     # for rate in prune_rates:

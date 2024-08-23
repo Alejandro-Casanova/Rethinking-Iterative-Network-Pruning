@@ -87,7 +87,8 @@ def plot_results(
   # print(df)
 
   # Drop columns I can not handle for now
-  df = df.drop(columns=['latency_pruned', 'latency_original', 'latency_delta'])
+  if 'latency_pruned' in df.columns:
+    df = df.drop(columns=['latency_pruned', 'latency_original', 'latency_delta'])
   print(df)
 
   # Group by the 'Category' column and calculate the mean of each group
@@ -187,6 +188,6 @@ def plot_results(
 
 if __name__ == "__main__":
 
-  selection_filters = ['one-shot', 'dynamic-iterative-flops']
-  plot_variables_list = ['runtime']
-  plot_results(selection_filters, plot_variables_list, higlight_min=False)
+  selection_filters = ['one-shot', 'dynamic-iterative']
+  plot_variables_list = ['real_prune_ratio']
+  plot_results(selection_filters, plot_variables_list, higlight_min=True)
