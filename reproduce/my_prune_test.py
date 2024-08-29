@@ -917,6 +917,7 @@ def static_iterative_prune(
         flops_list.append(new_flops)
         params_list.append(pruned_params)
         raw_accuracy_list.append(pruned_acc)
+        epochs_list.append(retraining_epochs)
         
         # Accumulate consumed budget after current iteration
         if i > 0:
@@ -940,7 +941,6 @@ def static_iterative_prune(
         logger.info(f"Latency after pruning: {latency_pruned_avg} ± {latency_pruned_std}")
 
         # Append results to list
-        epochs_list.append(retraining_epochs)
         regained_accuracy_list.append(last_acc)
         latency_list.append([latency_pruned_avg, latency_pruned_std])
         
@@ -1155,6 +1155,32 @@ if __name__ == "__main__":
     iterative_steps_list = [2,3,5,7,10]
     one_shot_flops = [104930890.0, 62791734.0, 41673948.0, 25498640.0, 9576348.0, 6258198.0]
 
+    speed_ups = [0,0,0,0,0,0]
+    budgets = [0,0,0,0,0,0]
+    for idx, prune_ratio in enumerate(prune_ratios):
+        for seed in range(5):
+            results = static_iterative_prune(
+                seed=seed,
+                retraining_epochs=40,
+                target_prune_ratio=prune_ratio,
+                num_iterations=5,
+                experiment_name="inverse-comparison"
+            )
+            speed_ups[idx] += results["speed_up"]
+            budgets[idx] += results["budget"]
+        speed_ups[idx] /= 5.0
+        budgets[idx] /= 5.0
+
+    for idx, prune_ratio in enumerate(prune_ratios):
+        for seed in range(5):
+            dynamic_one_shot_prune(
+                budget=budgets[idx],
+                seed=seed,
+                prune_ratio=prune_ratio,
+                target_speed_up=speed_ups[idx],
+                experiment_name="inverse-comparison"
+            )
+
     # for idx, speedup in enumerate(speed_ups):
     #     for iterative_steps in iterative_steps_list:
     #         for seed in range(5):
@@ -1167,15 +1193,6 @@ if __name__ == "__main__":
     #                 experiment_name="dynamic-iterative-flops"
     #             )
 
-    for seed in range(5, 20):
-        dynamic_epoch_allocation_pruning(
-            seed=seed,
-            target_speed_up=20.311904,
-            target_prune_ratio=0.95,
-            one_shot_final_flops=6258198.0,
-            num_iterations=10,
-            experiment_name="dynamic-iterative-flops"
-        )
 
     # One-shot pruning runs
     # for rate in prune_rates:
