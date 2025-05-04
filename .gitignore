@@ -38,3 +38,5 @@ reproduce/my_runs/*
 *.html
 !reproduce/my_tables/*
 !*/requirements*.txt
+
+.venv

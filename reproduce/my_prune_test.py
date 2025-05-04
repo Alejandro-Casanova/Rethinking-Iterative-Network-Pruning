@@ -21,7 +21,7 @@ import torch_pruning as tp
 import engine.utils as utils
 import registry
 
-import optuna
+# import optuna
 
 parser = argparse.ArgumentParser()
 
@@ -30,7 +30,7 @@ parser.add_argument("--mode", type=str, required=True, choices=["pretrain", "pru
 parser.add_argument("--model", type=str, required=True)
 parser.add_argument("--verbose", action="store_true", default=False)
 parser.add_argument("--dataset", type=str, default="cifar100", choices=['cifar10', 'cifar100', 'modelnet40'])
-parser.add_argument('--dataroot', default='data', help='path to your datasets')
+parser.add_argument('--data-root', default='data', help='path to your datasets')
 parser.add_argument("--batch-size", type=int, default=128)
 parser.add_argument("--total-epochs", type=int, default=100)
 parser.add_argument("--lr-decay-milestones", default="60,80", type=str, help="milestones for learning rate decay")
@@ -203,7 +203,7 @@ def setup_logger(dataset: str = "cifar10",
     return logger, output_dir
 
 def setup_model_and_dataset(logger: Logger,
-                            dataroot: str = "data",
+                            data_root: str = "data",
                             dataset: str = "cifar10",
                             model_name: str = "resnet56",
                             batch_size: int = 128,
@@ -211,7 +211,7 @@ def setup_model_and_dataset(logger: Logger,
     # Model & Dataset
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     num_classes, train_dst, val_dst, input_size = registry.get_dataset(
-        dataset, data_root=dataroot
+        dataset, data_root=data_root
     )
     #args.num_classes = num_classes
     model = registry.get_model(model_name, num_classes=num_classes, pretrained=True, target_dataset=dataset)
@@ -475,9 +475,9 @@ def calculate_global_speed_up(
 def dynamic_epoch_allocation_pruning(
     seed: int = None,
     retraining_epochs = 60,
-    finetuning_epochs = 40,
-    finetuning_lr: float = 0.001,
-    finetuning_lr_decay_milestones: str = "20",
+    fine_tuning_epochs = 40,
+    fine_tuning_lr: float = 0.001,
+    fine_tuning_lr_decay_milestones: str = "20",
     #initial_flops = 1e9,  # example initial FLOPs of unpruned model
     target_prune_ratio: float = 0.5,
     target_speed_up: float = None,
@@ -638,15 +638,15 @@ def dynamic_epoch_allocation_pruning(
                                  test_loader=test_loader,
                                  logger=logger,
                                  output_dir=output_dir,
-                                 total_epochs=finetuning_epochs,
-                                 lr=finetuning_lr,
-                                 lr_decay_milestones=finetuning_lr_decay_milestones)
+                                 total_epochs=fine_tuning_epochs,
+                                 lr=fine_tuning_lr,
+                                 lr_decay_milestones=fine_tuning_lr_decay_milestones)
 
     # Calculate Runtime
     runtime = str(timedelta( seconds=(time.time() - start_time) ))
 
     # Append results to list
-    epochs_list.append(finetuning_epochs)
+    epochs_list.append(fine_tuning_epochs)
     flops_list.append(flops_list[-1])
     params_list.append(params_list[-1])
     raw_accuracy_list.append(best_acc)
@@ -656,7 +656,7 @@ def dynamic_epoch_allocation_pruning(
     budget_accumulator = 0
 
     # Print results
-    for idx, epochs in enumerate(epochs_list[1:-1]): # Note, last element corresponds to finetuning iteration, and must not be considered in budget calculation
+    for idx, epochs in enumerate(epochs_list[1:-1]): # Note, last element corresponds to fine-tuning iteration, and must not be considered in budget calculation
         logger.info(f"Iteration {idx + 1}: {epochs:.2f} epochs with {flops_list[idx + 1]:.3e} FLOPs - Speedup: x{flops_list[idx] / flops_list[idx + 1]:.3f}")
         budget_accumulator += epochs * flops_list[idx + 1]
 
@@ -708,7 +708,7 @@ def dynamic_epoch_allocation_pruning(
                  file_name='list_results')
     
     # Reset logging module after each run of this function. This prevents unwanted logging
-    # behaviour when this function is called consecutive times during a single script run
+    # behavior when this function is called consecutive times during a single script run
     logging.shutdown()
     reload(logging)
 
@@ -799,7 +799,7 @@ def one_shot_prune(seed: int = None,
                  results=results)
     
     # Reset logging module after each run of this function. This prevents unwanted logging
-    # behaviour when this function is called consecutive times during a single script run
+    # behavior when this function is called consecutive times during a single script run
     logging.shutdown()
     reload(logging)
 
@@ -808,9 +808,9 @@ def one_shot_prune(seed: int = None,
 def static_iterative_prune(
     seed: int = None,
     retraining_epochs = 60,
-    finetuning_epochs = 40,
-    finetuning_lr: float = 0.001,
-    finetuning_lr_decay_milestones: str = "20",
+    fine_tuning_epochs = 40,
+    fine_tuning_lr: float = 0.001,
+    fine_tuning_lr_decay_milestones: str = "20",
     #initial_flops = 1e9,  # example initial FLOPs of unpruned model
     target_prune_ratio: float = 0.5,
     target_speed_up: float = None,
@@ -953,15 +953,15 @@ def static_iterative_prune(
                                  test_loader=test_loader,
                                  logger=logger,
                                  output_dir=output_dir,
-                                 total_epochs=finetuning_epochs,
-                                 lr=finetuning_lr,
-                                 lr_decay_milestones=finetuning_lr_decay_milestones)
+                                 total_epochs=fine_tuning_epochs,
+                                 lr=fine_tuning_lr,
+                                 lr_decay_milestones=fine_tuning_lr_decay_milestones)
 
     # Calculate Runtime
     runtime = str(timedelta( seconds=(time.time() - start_time) ))
 
     # Append results to list
-    epochs_list.append(finetuning_epochs)
+    epochs_list.append(fine_tuning_epochs)
     flops_list.append(flops_list[-1])
     params_list.append(params_list[-1])
     raw_accuracy_list.append(best_acc)
@@ -971,7 +971,7 @@ def static_iterative_prune(
     budget_accumulator = 0
 
     # Print results
-    for idx, epochs in enumerate(epochs_list[1:-1]): # Note, last element corresponds to finetuning iteration, and must not be considered in budget calculation
+    for idx, epochs in enumerate(epochs_list[1:-1]): # Note, last element corresponds to fine_tuning iteration, and must not be considered in budget calculation
         logger.info(f"Iteration {idx + 1}: {epochs:.2f} epochs with {flops_list[idx + 1]:.3e} FLOPs - Speedup: x{flops_list[idx] / flops_list[idx + 1]:.3f}")
         budget_accumulator += epochs * flops_list[idx + 1]
 
@@ -1021,7 +1021,7 @@ def static_iterative_prune(
                  file_name='list_results')
     
     # Reset logging module after each run of this function. This prevents unwanted logging
-    # behaviour when this function is called consecutive times during a single script run
+    # behavior when this function is called consecutive times during a single script run
     logging.shutdown()
     reload(logging)
 
@@ -1133,7 +1133,7 @@ def dynamic_one_shot_prune(
                  results=results)
     
     # Reset logging module after each run of this function. This prevents unwanted logging
-    # behaviour when this function is called consecutive times during a single script run
+    # behavior when this function is called consecutive times during a single script run
     logging.shutdown()
     reload(logging)
 
@@ -1143,7 +1143,7 @@ if __name__ == "__main__":
 
     # dynamic_epoch_allocation_pruning(
     #     seed=0,
-    #     finetuning_epochs=40,
+    #     fine_tuning_epochs=40,
     #     retraining_epochs=60,
     #     one_shot_final_flops=62791734.0,
     #     target_speed_up=2.0244052186869057,

@@ -4,11 +4,14 @@ einops
 tqdm
 torchvision>=0.9.1
 tensorboard
+pandas
+scipy
 
-torch_pruning
+# torch_pruning
 timm
 
 # for main_gat.py
 h5py
 networkx 
 igraph
+matplotlib
