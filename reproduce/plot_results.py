@@ -2,6 +2,7 @@ import argparse
 import glob
 import os
 import matplotlib
+import numpy as np
 import pandas as pd
 # import matplotlib
 import json
@@ -41,6 +42,13 @@ def plot_results(
     if isinstance(plot_variables_list, str):
         print("Single String passed instead of list... But don't worry, I can handle it ;)")
         plot_variables_list = [plot_variables_list]
+
+    if output_path is None:
+        pass
+    elif ".tex" in output_path:
+        latex_out = True
+    elif ".html" in output_path:
+        latex_out = False
 
     files = []
     for filter in filter_list:
@@ -124,6 +132,32 @@ def plot_results(
     # Pivot table with prune_rate as columns and prune_iterations as rows, averaging all columns
     pivot_table_mean = df.pivot_table(index='prune_iterations', columns='prune_rate', values=values_to_include, aggfunc='mean').round(2)
     pivot_table_std = df.pivot_table(index='prune_iterations', columns='prune_rate', values=values_to_include, aggfunc='std').round(2)
+    print(pivot_table_mean)
+    
+    # Plot line chart with pivot_table_mean and add std as error bars
+    
+    plt.figure(figsize=(10, 6))
+    cmap = matplotlib.colormaps.get_cmap('plasma')
+    colors = cmap(np.linspace(0, 1, len(pivot_table_mean[values_to_include[0]].index)))
+
+    for color, row in zip(colors, pivot_table_mean[values_to_include[0]].index):
+        plt.errorbar(
+            pivot_table_mean[values_to_include[1]].loc[row], #.columns,
+            pivot_table_mean[values_to_include[0]].loc[row],
+            xerr=pivot_table_std[values_to_include[1]].loc[row],
+            yerr=pivot_table_std[values_to_include[0]].loc[row],
+            marker='o',
+            label=f'Iterations: {row}',
+            capsize=5,
+            color=color
+        )
+    plt.title(f'{values_to_include[0]} vs {values_to_include[1]}')
+    plt.xlabel(f'{values_to_include[1]}')
+    plt.ylabel(values_to_include[0])
+    plt.legend(title='Prune Iterations')
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
 
     # Combine the mean and standard deviation tables into a single table
     pivot_table_combined = pd.DataFrame()
@@ -178,28 +212,23 @@ def plot_results(
         c_text = ["#FFFFFF" if x > 0.5 else "#000000" for x in normed]
         return [f"background-color: {bg_color}; color: {text_color};" for bg_color, text_color in zip(c, c_text)]
 
-
-    # Apply the highlight_max function to each column
-    # styled_pivot_table = pivot_table_combined.style.apply(
-    #     highlight(highlight_min),
-    #     axis=0
-    # )
-
     styled_pivot_table = pivot_table_combined.style.apply(
         background_grad_fun,
         cmap='Blues'
     )
-
+    
     if latex_out:
+
         latex_str = styled_pivot_table.to_latex(
-            clines="all;data",
+            clines="skip-last;data",
             label="blablabla",
             caption="BLABLABLA",
-            multirow_align="c",
             convert_css=True,
             position_float="centering",
             multicol_align="|c|",
             hrules=True,
+            position="h",
+            column_format="ccccccc",
             # index=False,
             # formatters={"name": str.upper},
             # float_format="{:.1f}".format,
@@ -209,11 +238,24 @@ def plot_results(
         for plot_var in plot_variables_list:
             latex_str = latex_str.replace(f"(\'{plot_var}\',", "")
         latex_str = latex_str.replace(")", "")
-        latex_str = latex_str.replace("prune_iterations", "p\\_iter")
+        latex_str = latex_str.replace("prune_iterations", "it.")
 
         print(latex_str)
+
+        # Save the styled DataFrame to an HTML file
+        if output_path is None:
+            output_path = 'styled_pivot_table.tex'
+
+        with open(output_path, "w", encoding="utf-8") as fp:
+            fp.write(latex_str)
         return
     
+    # Apply the highlight_max function to each column
+    # styled_pivot_table = pivot_table_combined.style.apply(
+    #     highlight(highlight_min),
+    #     axis=0
+    # )
+
     # Save the styled DataFrame to an HTML file
     if output_path is None:
         output_path = 'styled_pivot_table.html'
