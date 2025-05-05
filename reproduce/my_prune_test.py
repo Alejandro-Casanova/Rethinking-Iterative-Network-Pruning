@@ -323,6 +323,7 @@ def train_model(
     # For pruning
     weight_decay = 5e-4,
     save_state_dict_only = True,
+    keep_best: bool = True,
     #pruner = None,
     device = None,
 ) -> tuple:
@@ -340,6 +341,11 @@ def train_model(
     )
     model.to(device)
     best_acc = -1
+
+    os.makedirs(output_dir, exist_ok=True)
+    # if mode == "prune":
+    if save_as is None:
+        save_as = os.path.join(output_dir, "{}_{}_{}.pth".format(dataset, model_name, method) )
 
     # Starting point
     model.eval()
@@ -386,11 +392,6 @@ def train_model(
             )
         )
         if best_acc < acc:
-            os.makedirs(output_dir, exist_ok=True)
-            # if mode == "prune":
-            if save_as is None:
-                save_as = os.path.join( output_dir, "{}_{}_{}.pth".format(dataset, model_name, method) )
-
             if save_state_dict_only:
                 torch.save(model.state_dict(), save_as)
             else:
@@ -403,6 +404,12 @@ def train_model(
         scheduler.step()
     logger.info("Best Acc=%.4f" % (best_acc))
     logger.info("Last Acc=%.4f" % (acc))
+
+    if keep_best:
+        if save_state_dict_only:
+            model.load_state_dict(torch.load(save_as))
+        else:
+            model = torch.load(save_as)
     return best_acc, acc
 
 def retrain(model,
