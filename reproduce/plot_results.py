@@ -9,10 +9,36 @@ import json
 from pathlib import Path
 from typing import Literal
 from itertools import chain
-from matplotlib import colors, pyplot as plt
+from matplotlib import colors as pycolors, pyplot as plt
+
+variable_labels_dict: dict = {
+    'acc_drop': 'ΔExactitud (%)',
+    'real_prune_ratio': 'Ratio de poda real (%)',
+    'prune_rate': 'Ratio de poda (%)',
+    'prune_iterations': 'Iteraciones de poda',
+    'runtime': 'Tiempo de ejecución (min)',
+    'latency_original': 'Latencia original (ms)',
+    'latency_pruned': 'Latencia pruned (ms)',
+    'latency_delta': 'Latencia delta (ms)',
+    'speed_up': 'Aceleración',
+}
+
+variables_short_names_dict: dict = {
+    'acc_drop': 'Exactitud',
+    'real_prune_ratio': 'Ratio de poda real',
+    'prune_rate': 'Ratio de poda',
+    'prune_iterations': 'Iteraciones de poda',
+    'runtime': 'Tiempo de ejecución',
+    'latency_original': 'Latencia original',
+    'latency_pruned': 'Latencia pruned',
+    'latency_delta': 'Latencia delta',
+    'speed_up': 'Aceleración',
+} 
 
 current_dir = Path.cwd()
 results_dir = os.path.normpath(os.path.join(current_dir, "reproduce/my_runs"))
+
+pd.set_option('display.max_columns', None)
 
 def time_string_to_minutes(time_str: str) -> float:
     # print(time_str)
@@ -44,11 +70,15 @@ def plot_results(
         plot_variables_list = [plot_variables_list]
 
     if output_path is None:
-        pass
-    elif ".tex" in output_path:
-        latex_out = True
-    elif ".html" in output_path:
-        latex_out = False
+        raise Exception("Output path not specified!")
+    else:
+        # Check output path is a directory
+        if not os.path.isdir(output_path):
+            raise Exception("Output path is a file! Please specify a directory name instead.")
+        output_path = os.path.normpath(output_path)
+        # Create path if it does not exist
+        if not os.path.exists(os.path.dirname(output_path)):
+            os.makedirs(os.path.dirname(output_path))
 
     files = []
     for filter in filter_list:
@@ -112,7 +142,7 @@ def plot_results(
     # Drop columns I can not handle for now
     if 'latency_pruned' in df.columns:
         df = df.drop(columns=['latency_pruned', 'latency_original', 'latency_delta'])
-    print(df)
+    # print(df)
 
     # Group by the 'Category' column and calculate the mean of each group
     grouped_df = df.groupby('prune_rate')
@@ -132,8 +162,26 @@ def plot_results(
     # Pivot table with prune_rate as columns and prune_iterations as rows, averaging all columns
     pivot_table_mean = df.pivot_table(index='prune_iterations', columns='prune_rate', values=values_to_include, aggfunc='mean').round(2)
     pivot_table_std = df.pivot_table(index='prune_iterations', columns='prune_rate', values=values_to_include, aggfunc='std').round(2)
-    print(pivot_table_mean)
+    # print(pivot_table_mean)
+
+    if len(values_to_include) == 1:
+        x_values = pivot_table_mean[values_to_include[0]].columns
+        x_label = variable_labels_dict["prune_rate"]
+        x_label_short = variables_short_names_dict["prune_rate"]
+        y_label = variable_labels_dict[values_to_include[0]]
+        y_label_short = variables_short_names_dict[values_to_include[0]]
+    elif len(values_to_include) == 2:
+        x_values = pivot_table_mean[values_to_include[1]]
+        x_label = variable_labels_dict[values_to_include[1]]
+        x_label_short = variables_short_names_dict[values_to_include[1]]
+        y_label = variable_labels_dict[values_to_include[0]]
+        y_label_short = variables_short_names_dict[values_to_include[0]]
+    else:
+        raise Exception("More than 2 variables to plot. Please select only 1 or 2 variables.")
     
+    filename = f"{y_label_short} vs {x_label_short}"
+    output_path = os.path.join(output_path, filename)
+
     # Plot line chart with pivot_table_mean and add std as error bars
     
     plt.figure(figsize=(10, 6))
@@ -142,22 +190,29 @@ def plot_results(
 
     for color, row in zip(colors, pivot_table_mean[values_to_include[0]].index):
         plt.errorbar(
-            pivot_table_mean[values_to_include[1]].loc[row], #.columns,
+            x_values.loc[row] if len(values_to_include) == 2 else x_values,
             pivot_table_mean[values_to_include[0]].loc[row],
-            xerr=pivot_table_std[values_to_include[1]].loc[row],
+            xerr=pivot_table_std[values_to_include[1]].loc[row] if len(values_to_include) == 2 else None,
             yerr=pivot_table_std[values_to_include[0]].loc[row],
             marker='o',
-            label=f'Iterations: {row}',
+            label=f'{row}',
             capsize=5,
             color=color
         )
-    plt.title(f'{values_to_include[0]} vs {values_to_include[1]}')
-    plt.xlabel(f'{values_to_include[1]}')
-    plt.ylabel(values_to_include[0])
-    plt.legend(title='Prune Iterations')
+    plt.title(f'{y_label_short} vs {x_label_short}')
+    plt.xlabel(f'{x_label}')
+    plt.ylabel(y_label)
+    plt.legend(title=variables_short_names_dict["prune_iterations"])
     plt.grid(True)
     plt.tight_layout()
-    plt.show()
+    
+    plt.savefig(output_path + ".svg", format='svg')
+
+    if args.interactive:
+        plt.show()
+
+    if len(values_to_include) > 1:
+        return # If more than 1 variable to plot, stop here
 
     # Combine the mean and standard deviation tables into a single table
     pivot_table_combined = pd.DataFrame()
@@ -188,8 +243,8 @@ def plot_results(
                 is_highlighted_2 = aux == aux.nlargest(2).iloc[-1]
             
             if latex_out:
-                first_value_highlighted = ['cellcolor:[HTML]{f08080}; textbf:--rwrap;' if v else '' for v in is_highlighted]
-                second_value_highlighted = ['cellcolor:[HTML]{fdfd96}; textbf:--rwrap;' if v else '' for v in is_highlighted_2]
+                first_value_highlighted = ['cellcolor:[HTML]{0xF08080}; textbf:--rwrap;' if v else '' for v in is_highlighted]
+                second_value_highlighted = ['cellcolor:[HTML]{0xFDFD96}; textbf:--rwrap;' if v else '' for v in is_highlighted_2]
             else:
                 first_value_highlighted = ['font-weight: bold; color: red;' if v else '' for v in is_highlighted]
                 second_value_highlighted = ['font-weight: bold; color: yellow;' if v else '' for v in is_highlighted_2]
@@ -197,18 +252,18 @@ def plot_results(
         return highlight_fun
     
    
-    def background_grad_fun(s: pd.Series, cmap='PuBu', low=0, high=0):
+    def background_grad_fun(s: pd.Series, cmap='Blues', low=0, high=0):
         """Background gradient"""
         a = s.apply(str.split, args="±")
         a.apply(list.reverse)
         a = a.apply(list.pop)
         a = a.apply(float)
         range = a.max() - a.min()
-        norm = colors.Normalize(a.min() - (range * low),
+        norm = pycolors.Normalize(a.min() - (range * low),
                             a.max() + (range * high))
         normed = norm(a.values)
-        c = [colors.rgb2hex(x) for x in matplotlib.colormaps.get_cmap(cmap)(normed)]
-        # c_text = [colors.rgb2hex(x) for x in matplotlib.colormaps.get_cmap('gray')(normed)]
+        c = [pycolors.rgb2hex(x) for x in matplotlib.colormaps.get_cmap(cmap)(normed)]
+        # c_text = [pycolors.rgb2hex(x) for x in matplotlib.colormaps.get_cmap('gray')(normed)]
         c_text = ["#FFFFFF" if x > 0.5 else "#000000" for x in normed]
         return [f"background-color: {bg_color}; color: {text_color};" for bg_color, text_color in zip(c, c_text)]
 
@@ -216,13 +271,13 @@ def plot_results(
         background_grad_fun,
         cmap='Blues'
     )
-    
+    # print(styled_pivot_table)
     if latex_out:
 
         latex_str = styled_pivot_table.to_latex(
             clines="skip-last;data",
-            label="blablabla",
-            caption="BLABLABLA",
+            label="placeholder",
+            caption="placeholder",
             convert_css=True,
             position_float="centering",
             multicol_align="|c|",
@@ -240,13 +295,16 @@ def plot_results(
         latex_str = latex_str.replace(")", "")
         latex_str = latex_str.replace("prune_iterations", "it.")
 
-        print(latex_str)
+        # Replace header with template
+        latex_str = latex_str.split("\\midrule")[1] # Split string at "\midrule"
+        # Get the string to replace it with from latex_example_header.tex
+        with open("reproduce/latex_example_header.tex", "r") as f:
+            header_str = f.read()
+        latex_str = header_str + latex_str # Add header to the string
+        # Insert closing brace after "\end{tabular}""
+        latex_str = latex_str.replace("\\end{tabular}", "\\end{tabular}}")
 
-        # Save the styled DataFrame to an HTML file
-        if output_path is None:
-            output_path = 'styled_pivot_table.tex'
-
-        with open(output_path, "w", encoding="utf-8") as fp:
+        with open(output_path + '.tex', "w", encoding="utf-8") as fp:
             fp.write(latex_str)
         return
     
@@ -257,9 +315,7 @@ def plot_results(
     # )
 
     # Save the styled DataFrame to an HTML file
-    if output_path is None:
-        output_path = 'styled_pivot_table.html'
-    styled_pivot_table.to_html(output_path)
+    styled_pivot_table.to_html(output_path + ".html")
 
     return
 
@@ -299,11 +355,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     # Basic options
-    parser.add_argument("-f", "--experiment-filters", type=str, default="one-shot,dynamic-iterative")
-    parser.add_argument("-plt", "--plot-variables", type=str, default="acc_drop")
-    parser.add_argument("-ltx", "--latex-out", action="store_true", default=False)
-    parser.add_argument("-hmn", "--highlight-min", action="store_true", default=False)
-    parser.add_argument("-v", "--verbose", action="store_true", default=False)
+    parser.add_argument("-f", "--experiment-filters", type=str, default="one-shot,dynamic-iterative", help="Experiment filters to select from results directory. E.g. 'one-shot,dynamic-iterative'")
+    parser.add_argument("-o", "--output-path", type=str, default=None, help="Output path for the plot and table (must be a directory)")
+    parser.add_argument("-plt", "--plot-variables", type=str, default="acc_drop", help="Variables to plot (just 1 or 2). Comma separated. E.g. 'acc_drop,real_prune_ratio'")
+    parser.add_argument("-ltx", "--latex-out", action="store_true", default=False, help="Output latex table instead of html")
+    parser.add_argument("-hmn", "--highlight-min", action="store_true", default=False, help="Highlight min values in table (invert gradient)")
+    parser.add_argument("-i", "--interactive", action="store_true", default=False, help="Activate interactive plot mode")
+    parser.add_argument("-v", "--verbose", action="store_true", default=False, help="Activate verbose mode")
 
     args = parser.parse_args()
 
@@ -322,5 +380,6 @@ if __name__ == "__main__":
         filter_list=selection_filters, 
         plot_variables_list=plot_variables_list, 
         highlight_min=args.highlight_min,
-        latex_out=args.latex_out
+        latex_out=args.latex_out,
+        output_path=os.path.normpath(args.output_path) if args.output_path is not None else None
     )
