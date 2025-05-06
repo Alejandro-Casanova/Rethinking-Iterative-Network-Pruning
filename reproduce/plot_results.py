@@ -21,6 +21,7 @@ variable_labels_dict: dict = {
     'latency_pruned': 'Latencia pruned (ms)',
     'latency_delta': 'Latencia delta (ms)',
     'speed_up': 'Aceleración',
+    'target_speed_up': 'Aceleración objetivo',
 }
 
 variables_short_names_dict: dict = {
@@ -33,6 +34,7 @@ variables_short_names_dict: dict = {
     'latency_pruned': 'Latencia pruned',
     'latency_delta': 'Latencia delta',
     'speed_up': 'Aceleración',
+    'target_speed_up': 'Aceleración objetivo',
 } 
 
 current_dir = Path.cwd()
@@ -60,7 +62,9 @@ def plot_results(
     plot_variables_list: list = ['acc_drop'],
     highlight_min: bool = False, # Highlight min values, instead of max
     latex_out: bool = False,
-    output_path: str = None
+    output_path: str = None,
+    force_speedup: bool = False,
+    interactive_plot: bool = False,
 ):
     if isinstance(filter_list, str):
         print("Single String passed instead of list... But don't worry, I can handle it ;)")
@@ -151,7 +155,18 @@ def plot_results(
     df_mean = grouped_df.mean().reset_index()
     df_std = grouped_df.std().reset_index()
     print(df_mean)
-    print(df_std)
+    # print(df_std)
+
+    if force_speedup:
+        # Fill all target_speed_up NaN values in df with the mean target_speed_up for the same prune_rate
+        # First iterate over rows
+        for index, row in df.iterrows():
+            if pd.isna(row['target_speed_up']):
+                # Get the mean target_speed_up for the same prune_rate
+                mean_target_speed_up = df_mean.loc[df_mean['prune_rate'] == row['prune_rate'], 'target_speed_up'].values[0]
+                # Fill the NaN value with the mean
+                df.at[index, 'target_speed_up'] = mean_target_speed_up
+    # print(df.head(10))
 
     if not df_mean["seed"].eq(2.0).all(axis=0):
         raise Exception("Average of seeds should be 2, to ensure no samples were left out.")
@@ -160,14 +175,15 @@ def plot_results(
     values_to_include = plot_variables_list
 
     # Pivot table with prune_rate as columns and prune_iterations as rows, averaging all columns
-    pivot_table_mean = df.pivot_table(index='prune_iterations', columns='prune_rate', values=values_to_include, aggfunc='mean').round(2)
-    pivot_table_std = df.pivot_table(index='prune_iterations', columns='prune_rate', values=values_to_include, aggfunc='std').round(2)
-    # print(pivot_table_mean)
+    columns_selector = "target_speed_up" if force_speedup else "prune_rate"
+    pivot_table_mean = df.pivot_table(index='prune_iterations', columns=columns_selector, values=values_to_include, aggfunc='mean').round(2)
+    pivot_table_std = df.pivot_table(index='prune_iterations', columns=columns_selector, values=values_to_include, aggfunc='std').round(2)
+    print(pivot_table_mean)
 
     if len(values_to_include) == 1:
         x_values = pivot_table_mean[values_to_include[0]].columns
-        x_label = variable_labels_dict["prune_rate"]
-        x_label_short = variables_short_names_dict["prune_rate"]
+        x_label = variable_labels_dict[columns_selector]
+        x_label_short = variables_short_names_dict[columns_selector]
         y_label = variable_labels_dict[values_to_include[0]]
         y_label_short = variables_short_names_dict[values_to_include[0]]
     elif len(values_to_include) == 2:
@@ -208,7 +224,7 @@ def plot_results(
     
     plt.savefig(output_path + ".svg", format='svg')
 
-    if args.interactive:
+    if interactive_plot:
         plt.show()
 
     if len(values_to_include) > 1:
@@ -298,7 +314,8 @@ def plot_results(
         # Replace header with template
         latex_str = latex_str.split("\\midrule")[1] # Split string at "\midrule"
         # Get the string to replace it with from latex_example_header.tex
-        with open("reproduce/latex_example_header.tex", "r") as f:
+        template_file_path = "reproduce/latex_example_header_prune_rate.tex" if not force_speedup else "reproduce/latex_example_header_speed_up.tex"
+        with open(template_file_path, "r", encoding='utf-8') as f:
             header_str = f.read()
         latex_str = header_str + latex_str # Add header to the string
         # Insert closing brace after "\end{tabular}""
@@ -361,6 +378,7 @@ if __name__ == "__main__":
     parser.add_argument("-ltx", "--latex-out", action="store_true", default=False, help="Output latex table instead of html")
     parser.add_argument("-hmn", "--highlight-min", action="store_true", default=False, help="Highlight min values in table (invert gradient)")
     parser.add_argument("-i", "--interactive", action="store_true", default=False, help="Activate interactive plot mode")
+    parser.add_argument("-fs", "--force-speedup", action="store_true", default=False, help="Force target_speed_up to be the x axis constant (experiment 2)")
     parser.add_argument("-v", "--verbose", action="store_true", default=False, help="Activate verbose mode")
 
     args = parser.parse_args()
@@ -381,5 +399,7 @@ if __name__ == "__main__":
         plot_variables_list=plot_variables_list, 
         highlight_min=args.highlight_min,
         latex_out=args.latex_out,
-        output_path=os.path.normpath(args.output_path) if args.output_path is not None else None
+        output_path=os.path.normpath(args.output_path) if args.output_path is not None else None,
+        force_speedup=args.force_speedup,
+        interactive_plot=args.interactive,
     )
