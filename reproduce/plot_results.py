@@ -65,6 +65,8 @@ def plot_results(
     output_path: str = None,
     force_speedup: bool = False,
     interactive_plot: bool = False,
+    only_plot: bool = False,
+    image_format: Literal['eps', 'svg'] = 'eps',
 ):
     if isinstance(filter_list, str):
         print("Single String passed instead of list... But don't worry, I can handle it ;)")
@@ -222,11 +224,14 @@ def plot_results(
     plt.grid(True)
     plt.tight_layout()
     
-    plt.savefig(output_path + ".svg", format='svg')
+    plt.savefig(output_path + f".{image_format}", format=image_format)
 
     if interactive_plot:
         plt.show()
 
+    if only_plot:
+        return
+    
     if len(values_to_include) > 1:
         return # If more than 1 variable to plot, stop here
 
@@ -379,6 +384,8 @@ if __name__ == "__main__":
     parser.add_argument("-hmn", "--highlight-min", action="store_true", default=False, help="Highlight min values in table (invert gradient)")
     parser.add_argument("-i", "--interactive", action="store_true", default=False, help="Activate interactive plot mode")
     parser.add_argument("-fs", "--force-speedup", action="store_true", default=False, help="Force target_speed_up to be the x axis constant (experiment 2)")
+    parser.add_argument("-op", "--only-plot", action="store_true", default=False, help="Only plot the results graph, no table.")
+    parser.add_argument("-if", "--image-format", type=str, default="eps", help="Image format to save the plot (default: eps)")
     parser.add_argument("-v", "--verbose", action="store_true", default=False, help="Activate verbose mode")
 
     args = parser.parse_args()
@@ -402,4 +409,6 @@ if __name__ == "__main__":
         output_path=os.path.normpath(args.output_path) if args.output_path is not None else None,
         force_speedup=args.force_speedup,
         interactive_plot=args.interactive,
+        only_plot=args.only_plot,
+        # image_format=args.image_format, # Not used yet
     )
