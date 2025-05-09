@@ -303,7 +303,7 @@ def plot_results(
             position_float="centering",
             multicol_align="|c|",
             hrules=True,
-            position="h",
+            position="!ht",
             column_format="ccccccc",
             # index=False,
             # formatters={"name": str.upper},
