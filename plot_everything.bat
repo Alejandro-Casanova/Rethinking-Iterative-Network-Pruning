@@ -11,4 +11,5 @@ python .\reproduce\plot_results.py -o .\reproduce\my_results\experimento2 -ltx -
 python .\reproduce\plot_results.py -o .\reproduce\my_results\experimento2 -ltx -op -f one-shot,dynamic-iterative-flops -fs -plt acc_drop,speed_up
 python .\reproduce\plot_results.py -o .\reproduce\my_results\experimento2 -ltx -op -f one-shot,dynamic-iterative-flops -fs -plt acc_drop,real_prune_ratio
 python .\reproduce\plot_results.py -o .\reproduce\my_results\experimento2 -ltx -op -f one-shot,dynamic-iterative-flops -fs -plt real_prune_ratio
-python .\reproduce\plot_results.py -o .\reproduce\my_results\experimento2 -ltx -op -f one-shot,dynamic-iterative-flops -fs -plt runtime
+python .\reproduce\plot_results.py -o .\reproduce\my_results\experimento2 -ltx -op -f one-shot,dynamic-iterative-flops -fs -plt runtime,speed_up
+python .\reproduce\plot_results.py -o .\reproduce\my_results\experimento2 -ltx -op -f one-shot,dynamic-iterative-flops -fs -plt runtime,real_prune_ratio
